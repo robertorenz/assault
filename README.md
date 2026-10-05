@@ -2,6 +2,8 @@
 
 A revamped remake of **Namco's 1988 arcade *Assault***, the top-down tank shooter whose whole battlefield rotates around your tank. It's written in plain HTML5 canvas, WebGL (Three.js, vendored) and JavaScript, with no build step and no image or audio files. Every map tile, sprite, 3D model and sound effect is generated in code.
 
+**▶ [Play it in your browser](https://robertorenz.github.io/assault/)**
+
 ![Start screen with the three view choices](docs/screenshots/menu.jpg)
 
 Each stage is a floating island in open space, edged by puffy rock cliffs and foliage, with a stone pentagon fortress at the far end. The look follows the arcade original: a vertical screen, the pink `SCORE / TIME / TOPSCORE` HUD, a white-blue-gold tank, pink enemy tanks and bullets, and red pyramid guns around a red core.
@@ -24,7 +26,9 @@ Each stage theme has its own palette. Stage 3, the sand lakes, has pink rock cli
 
 ## Play
 
-Serve the folder over HTTP and open it in a browser:
+**Play online: https://robertorenz.github.io/assault/**
+
+To run it locally, serve the folder over HTTP and open it in a browser:
 
 ```bash
 python -m http.server 8765
@@ -83,3 +87,27 @@ All three renderers read the same `Game` state and consume the same event stream
 Stages are generated from a seed, so each stage number always produces the same map. The generator checks that every map is passable from start to fortress, and builds a distance map that drives both the exit arrow and the attract-mode autopilot.
 
 The high score, the last chosen view and the mute setting are saved in `localStorage`.
+
+## History
+
+### The original
+
+*Assault* is a tank shooter released to arcades by **Namco in 1988**. It ran on Namco's System 2 board, and its centrepiece was hardware rotation and scaling: the whole playfield turns around your tank instead of the tank turning on a fixed map. You drove the tank with tread-style controls. Its moves were a sideways roll to dodge fire and the Power Wheelie, which lobbed a grenade over walls. It played on a vertical monitor, crossing timed stretches of terrain toward a fortress at the end of each stage.
+
+### This remake
+
+| Date | Version | Changes |
+|------|---------|---------|
+| 2026-10-04 | First build | Started as a remake of the wrong game: an Atari-style 1983 shooter, with Classic and 2.5D views over a shared fixed-step simulation, synthesized audio, keyboard / gamepad / touch input and modal screens. |
+| 2026-10-04 | Rebuilt as *Assault* | Re-targeted at Namco's 1988 arcade game. Added a rotating battlefield, tank controls with rolls and the Power Wheelie, lift zones, jump pads, timed areas, a fortress with guns and a core, a seeded stage generator, the exit arrow and an attract-mode autopilot. |
+| 2026-10-04 | Arcade look | Rebuilt from reference frames of the original. Stages became floating islands with puffy rock cliffs and five themes. Added the pentagon fortress with five pyramid guns, a vertical 224×288 Classic screen with the pink arcade HUD, and the two-digit timer that refills at each ridge. |
+| 2026-10-04 | 3D view | Added a full WebGL view (Three.js) with lighting, shadows, bloom, debris and a minimap. The menu now offers 3D / 2.5D / Classic. Added the `?demo=` screenshot mode and README screenshots. |
+| 2026-10-04 | Online | Published on GitHub Pages at https://robertorenz.github.io/assault/. |
+
+## Credits
+
+- **Original game:** *Assault* © 1988 Namco (now Bandai Namco Entertainment). This is an unofficial, non-commercial fan remake made as a tribute. It uses none of the original's code, graphics or sound, and it isn't affiliated with or endorsed by Bandai Namco. *Assault* and Namco are trademarks of their respective owners.
+- **Remake:** Roberto Renz, built with [Claude Code](https://claude.com/claude-code) (Anthropic).
+- **3D engine:** [Three.js](https://threejs.org) r147, including the EffectComposer and UnrealBloomPass add-ons. © 2010–2022 three.js authors, MIT License (see `js/vendor/three/LICENSE`).
+- **Fonts:** [Orbitron](https://fonts.google.com/specimen/Orbitron) (Matt McInerney), [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) (CodeMan38) and [Rajdhani](https://fonts.google.com/specimen/Rajdhani) (Indian Type Foundry), served by Google Fonts under the SIL Open Font License.
+- **Art and audio:** every tile, sprite, 3D model and sound effect is generated in code at runtime.
