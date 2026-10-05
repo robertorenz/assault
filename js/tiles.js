@@ -1,49 +1,30 @@
 /* Assault Revamped — map texture painter.
- * Paints a stage's tile map into a canvas at 1 px per world unit.
- *   mode 'flat'  : full top-down pixel art (walls bevelled, trees drawn) for the Classic view
- *   mode 'floor' : ground layer only (tall tiles become footprints) for the 2.5D mode-7 floor */
+ * Paints a stage into a canvas at 1 px per world unit in the style of the
+ * arcade game: mottled ground, puffy rock cliffs fringed with foliage, rivers
+ * and lakes, city lots, machinery, craters, lift rings and the stone pentagon
+ * fortress. Space (VOID) is left transparent so the renderer's starfield
+ * shows through around the island.
+ *   mode 'flat'  : everything, for the Classic view
+ *   mode 'floor' : no raised blocks (the 2.5D view extrudes those itself) */
 (function (global) {
   'use strict';
 
   const { TS, T } = global.Assault;
 
-  const PALETTES = {
-    desert: {
-      g: ['#c8a266', '#b9925a', '#d8b47a', '#a88050'], crack: '#9a7446',
-      wall: '#9a7a52', wallHi: '#c9a878', wallLo: '#5e4428', wallTop: '#b08c60',
-      block: '#8a6a4a', blockHi: '#b89270', blockLo: '#4e3622',
-      tree: ['#4e6a2a', '#6e8a3a', '#2e4218'], rubble: ['#8a6a46', '#6a5034', '#a8865c'],
-      water: '#2a6aa0', waterHi: '#78b4e0', waterLo: '#1a4a78', bridge: '#8a5a32', bridgeHi: '#b07a48',
-      fort: '#6a6670', fortHi: '#a8a4ae', fortLo: '#34323a', shadow: 'rgba(60,34,8,0.42)', foot: '#7a5e3c'
-    },
-    base: {
-      g: ['#5a6470', '#4e5864', '#68737f', '#434b56'], crack: '#3a414a',
-      wall: '#38414e', wallHi: '#8494a8', wallLo: '#1a1f27', wallTop: '#465060',
-      block: '#7a6a48', blockHi: '#a8946a', blockLo: '#44391f',
-      tree: ['#3a5a3a', '#4e7a4a', '#223822'], rubble: ['#4a525c', '#383e46', '#6a747e'],
-      water: '#1e5080', waterHi: '#5a9ad0', waterLo: '#123458', bridge: '#5a5e66', bridgeHi: '#8a8e96',
-      fort: '#4a3e3e', fortHi: '#8a7272', fortLo: '#241c1c', shadow: 'rgba(0,0,0,0.45)', foot: '#2a3038', light: '#2dd4bf'
-    },
-    forest: {
-      g: ['#3e7432', '#35662a', '#4c843a', '#2c5622'], crack: '#2a4e20',
-      wall: '#74746a', wallHi: '#a8a89a', wallLo: '#3e3e36', wallTop: '#86867a',
-      block: '#7a5a3a', blockHi: '#a47c52', blockLo: '#44301c',
-      tree: ['#1e5a24', '#3a8a3a', '#0e3412'], rubble: ['#5a5a4e', '#44443a', '#7a7a6a'],
-      water: '#245e94', waterHi: '#6aa8dc', waterLo: '#143e66', bridge: '#7a5230', bridgeHi: '#a87444',
-      fort: '#5a5a62', fortHi: '#9a9aa4', fortLo: '#2a2a32', shadow: 'rgba(0,20,0,0.42)', foot: '#2c4a22'
-    },
-    river: {
-      g: ['#6a8a3e', '#5c7a34', '#7a9a4a', '#4e6a2c'], crack: '#4a6428',
-      wall: '#7e7a6e', wallHi: '#b0aa9a', wallLo: '#46423a', wallTop: '#908a7c',
-      block: '#7a5a3a', blockHi: '#a47c52', blockLo: '#44301c',
-      tree: ['#2a6a2a', '#4a9a40', '#144016'], rubble: ['#6a6656', '#504c40', '#86826e'],
-      water: '#2266a8', waterHi: '#74b6ea', waterLo: '#164878', bridge: '#86582e', bridgeHi: '#b47c44',
-      fort: '#5e5a64', fortHi: '#a09ca8', fortLo: '#2c2a32', shadow: 'rgba(0,20,10,0.42)', foot: '#3e5226'
-    }
+  const THEME = {
+    grass:  { ground: ['#5c501a', '#746622', '#8a7a2a', '#a2923a'], rock: 'grey', water: ['#2c8a86', '#7fd3c8', '#1f6a66'] },
+    forest: { ground: ['#223a10', '#304e18', '#3e621e', '#557a2a'], rock: 'grey', water: ['#2a8a84', '#86d8cc', '#1d6662'] },
+    sand:   { ground: ['#7a6a44', '#8e7e56', '#a29268', '#b8a87e'], rock: 'red', water: ['#2994a0', '#90e0e4', '#1d6e78'] },
+    city:   { ground: ['#44424c', '#4e4c56', '#585660', '#66646d'], rock: 'grey', water: ['#2a6e96', '#7ab8e0', '#1d4e6e'] },
+    base:   { ground: ['#36383f', '#40424a', '#4a4c54', '#585a62'], rock: 'grey', water: ['#2a6e96', '#7ab8e0', '#1d4e6e'] }
   };
+  const ROCKS = { grey: ['#26262a', '#5e5e64', '#a0a0a6', '#e6e6ea'], red: ['#382220', '#784c46', '#b2847c', '#ecccc4'] };
+  const LEAF = ['#123a10', '#22621a', '#3c8e28', '#74c23e'];
+
+  const rgb = h => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
 
   function hash(x, y, k) {
-    let h = (x * 374761393 + y * 668265263 + (k || 0) * 2147483647) | 0;
+    let h = (x * 374761393 + y * 668265263 + (k || 0) * 1442695041) | 0;
     h = Math.imul(h ^ (h >>> 13), 1274126177);
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   }
@@ -52,270 +33,471 @@
     constructor(stage, mode) {
       this.stage = stage;
       this.mode = mode;
-      this.pal = PALETTES[stage.theme.key];
+      this.th = THEME[stage.theme.key];
+      this.key = stage.theme.key;
+      this.rock = ROCKS[this.th.rock];
+      this.W = stage.MW * TS;
+      this.H = stage.MH * TS;
       this.canvas = document.createElement('canvas');
-      this.canvas.width = stage.MW * TS;
-      this.canvas.height = stage.MH * TS;
+      this.canvas.width = this.W;
+      this.canvas.height = this.H;
       this.ctx = this.canvas.getContext('2d');
-      this.paintRegion(0, 0, stage.MW - 1, stage.MH - 1);
+      this.buildNoise();
+      this.stonePattern = this.makeStone();
+      this.paintRegion(0, 0, stage.MW - 1, stage.MH - 1, true);
+    }
+
+    /* Smooth two-octave value noise, generated by upscaling random grids. */
+    buildNoise() {
+      const W = this.W, H = this.H;
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const x = c.getContext('2d');
+      x.imageSmoothingEnabled = true;
+      let seed = this.stage.n * 977 + 13;
+      const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+      const layer = (cell, alpha) => {
+        const g = document.createElement('canvas');
+        g.width = Math.ceil(W / cell) + 2; g.height = Math.ceil(H / cell) + 2;
+        const gx = g.getContext('2d'), img = gx.createImageData(g.width, g.height);
+        for (let i = 0; i < img.data.length; i += 4) {
+          const v = rnd() * 255 | 0;
+          img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+          img.data[i + 3] = 255;
+        }
+        gx.putImageData(img, 0, 0);
+        x.globalAlpha = alpha;
+        x.drawImage(g, 0, 0, g.width, g.height, -cell, -cell, g.width * cell, g.height * cell);
+      };
+      x.fillStyle = '#808080';
+      x.fillRect(0, 0, W, H);
+      layer(26, 1);
+      layer(7, 0.45);
+      const d = x.getImageData(0, 0, W, H).data;
+      this.noise = new Uint8Array(W * H);
+      for (let i = 0, j = 0; j < this.noise.length; i += 4, j++) this.noise[j] = d[i];
+    }
+
+    makeStone() {
+      const c = document.createElement('canvas');
+      c.width = 48; c.height = 48;
+      const x = c.getContext('2d');
+      x.fillStyle = '#687084';
+      x.fillRect(0, 0, 48, 48);
+      for (let i = 0; i < 260; i++) {
+        x.fillStyle = ['#5c6476', '#747c90', '#80889c', '#606a7c'][i % 4];
+        x.fillRect((hash(i, 1) * 48) | 0, (hash(i, 2) * 48) | 0, 2, 1);
+      }
+      x.strokeStyle = '#464c5c';
+      x.lineWidth = 1;
+      x.beginPath();
+      for (const y of [0, 16, 32]) { x.moveTo(0, y + 0.5); x.lineTo(48, y + 0.5); }
+      for (const [y, off] of [[0, 0], [16, 12], [32, 6]]) for (let k = 0; k < 3; k++) { const xx = (off + k * 20) % 48 + 0.5; x.moveTo(xx, y); x.lineTo(xx, y + 16); }
+      x.stroke();
+      x.strokeStyle = 'rgba(255,255,255,0.12)';
+      x.beginPath();
+      for (const y of [1, 17, 33]) { x.moveTo(0, y + 0.5); x.lineTo(48, y + 0.5); }
+      x.stroke();
+      return this.ctx.createPattern(c, 'repeat');
+    }
+
+    nearVoid(tx, ty) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (this.tile(tx + dx, ty + dy) === T.VOID) return true;
+      return false;
     }
 
     tile(tx, ty) {
       const s = this.stage;
-      if (tx < 0 || ty < 0 || tx >= s.MW || ty >= s.MH) return T.WALL;
+      if (tx < 0 || ty < 0 || tx >= s.MW || ty >= s.MH) return T.VOID;
       return s.map[ty * s.MW + tx];
     }
 
-    isTall(v) { return v === T.WALL || v === T.BLOCK || v === T.TREE || v === T.FORT; }
-
-    /* Repaint tiles around (tx,ty) after a tile changes. */
     redraw(tx, ty) {
       const c = this.ctx;
       c.save();
       c.beginPath();
       c.rect((tx - 1) * TS, (ty - 1) * TS, TS * 3, TS * 3);
       c.clip();
-      this.paintRegion(tx - 2, ty - 2, tx + 2, ty + 2);
+      this.paintBase(tx - 1, ty - 1, tx + 1, ty + 1);
+      this.paintRegion(tx - 2, ty - 2, tx + 2, ty + 2, false);
       c.restore();
     }
 
-    paintRegion(x0, y0, x1, y1) {
+    /* ---------------- per-pixel base layer ---------------- */
+
+    paintBase(x0, y0, x1, y1) {
       const s = this.stage;
       x0 = Math.max(0, x0); y0 = Math.max(0, y0);
       x1 = Math.min(s.MW - 1, x1); y1 = Math.min(s.MH - 1, y1);
-      // 1. floor layer
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) this.paintFloor(x, y);
-      // 2. cast shadows (toward the south-east)
+      const px0 = x0 * TS, py0 = y0 * TS, pw = (x1 - x0 + 1) * TS, ph = (y1 - y0 + 1) * TS;
+      const img = this.ctx.createImageData(pw, ph), d = img.data;
+      const G = this.th.ground.map(rgb), Wt = this.th.water.map(rgb), Rk = this.rock.map(rgb);
+      const metal = this.key === 'base';
+      const W = this.W, noise = this.noise;
+      for (let py = 0; py < ph; py++) {
+        const wy = py0 + py, ty = (wy / TS) | 0;
+        for (let px = 0; px < pw; px++) {
+          const wx = px0 + px, tx = (wx / TS) | 0;
+          const v = this.tile(tx, ty);
+          const o = (py * pw + px) * 4;
+          if (v === T.VOID) { d[o + 3] = 0; continue; }
+          const n = noise[wy * W + wx] / 255;
+          const sp = hash(wx, wy, 7);
+          let col;
+          if (v === T.WATER || v === T.BRIDGE) {
+            const wave = Math.sin(wx * 0.22 + n * 9 + wy * 0.05);
+            col = wave > 0.86 ? Wt[1] : n < 0.4 ? Wt[2] : Wt[0];
+          } else if (v === T.ROCK) {
+            if (this.nearVoid(tx, ty)) { d[o + 3] = 0; continue; }
+            col = n + sp * 0.3 > 0.75 ? Rk[1] : Rk[0];
+          } else if ((metal && v !== T.RUBBLE) || v === T.ROAD || v === T.JUMP) {
+            const mx = wx % 32, my = wy % 32;
+            const lift = v === T.ROAD || v === T.JUMP ? 1 : 0;
+            let k = 1 + lift + (n > 0.62 ? 1 : 0);
+            if (mx === 0 || my === 0) k = 0;
+            else if (mx === 1 || my === 1) k = Math.min(3, k + 1);
+            else if ((mx === 4 || mx === 27) && (my === 4 || my === 27)) k = 3;
+            col = G[Math.min(3, k)];
+          } else {
+            let k = Math.floor((n * 0.8 + sp * 0.42 - 0.12) * 3.6);
+            if (v === T.BUSH || v === T.BLOCK) k -= 1;
+            col = G[k < 0 ? 0 : k > 3 ? 3 : k];
+          }
+          d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255;
+        }
+      }
+      this.ctx.putImageData(img, px0, py0);
+    }
+
+    /* ---------------- vector overlays ---------------- */
+
+    paintRegion(x0, y0, x1, y1, full) {
+      const s = this.stage;
+      x0 = Math.max(0, x0); y0 = Math.max(0, y0);
+      x1 = Math.min(s.MW - 1, x1); y1 = Math.min(s.MH - 1, y1);
+      if (full) this.paintBase(x0, y0, x1, y1);
       const c = this.ctx;
-      c.fillStyle = this.pal.shadow;
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-        const v = this.tile(x, y);
-        if (!this.isTall(v)) continue;
-        const off = v === T.BLOCK ? 4 : v === T.TREE ? 5 : 6;
-        if (v === T.TREE) {
-          c.beginPath(); c.arc(x * TS + 16 + off, y * TS + 16 + off, 14, 0, Math.PI * 2); c.fill();
-        } else {
-          c.fillRect(x * TS + off, y * TS + off, TS, TS);
-        }
+
+      // flat details
+      for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+        const v = this.tile(tx, ty);
+        if (v === T.GROUND) this.groundDetail(tx, ty);
+        else if (v === T.RUBBLE) this.crater(tx * TS + 16, ty * TS + 16, 12, tx * 7 + ty);
+        else if (v === T.BRIDGE) this.bridge(tx, ty);
+        else if (v === T.JUMP) this.jumpPad(tx, ty);
+        else if (v === T.WATER) this.shore(tx, ty);
       }
-      // 3. tall tiles
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-        const v = this.tile(x, y);
-        if (this.isTall(v)) this.paintTall(x, y, v);
+      // lift rings
+      for (const l of s.lifts) {
+        if (l.x + 1 < x0 - 1 || l.x > x1 + 1 || l.y + 1 < y0 - 1 || l.y > y1 + 1) continue;
+        this.liftRing((l.x + 1) * TS, (l.y + 1) * TS, l.used);
+      }
+      // fortress platform
+      const f = s.fort;
+      if (y0 * TS < (f.cy + f.r + 1) * TS) this.fortress(f);
+
+      // shadows, then raised things in painter's order
+      c.fillStyle = 'rgba(0,0,0,0.32)';
+      for (let ty = y0 - 1; ty <= y1; ty++) for (let tx = x0 - 1; tx <= x1; tx++) {
+        const v = this.tile(tx, ty);
+        if (v === T.BLOCK && this.mode === 'flat') c.fillRect(tx * TS + 5, ty * TS + 6, TS, TS);
+      }
+      const blobs = [];
+      for (let ty = y0 - 1; ty <= y1 + 1; ty++) for (let tx = x0 - 1; tx <= x1 + 1; tx++) {
+        const v = this.tile(tx, ty);
+        if (v === T.ROCK) for (const b of rockBlobs(tx, ty)) blobs.push(b);
+      }
+      blobs.sort((a, b) => a.y - b.y);
+      c.fillStyle = 'rgba(0,0,0,0.3)';
+      for (const b of blobs) { c.beginPath(); c.arc(b.x + 5, b.y + 6, b.r, 0, Math.PI * 2); c.fill(); }
+      for (const b of blobs) this.rockBlob(b);
+      for (let ty = y0 - 1; ty <= y1 + 1; ty++) for (let tx = x0 - 1; tx <= x1 + 1; tx++) {
+        const v = this.tile(tx, ty);
+        if (v === T.ROCK) this.foliageEdge(tx, ty);
+        else if (v === T.BUSH) this.bush(tx, ty);
+        else if (v === T.BLOCK && this.mode === 'flat') this.block(tx, ty);
       }
     }
 
-    paintGround(x, y) {
-      const c = this.ctx, P = this.pal, X = x * TS, Y = y * TS, key = this.stage.theme.key;
-      c.fillStyle = P.g[0];
-      c.fillRect(X, Y, TS, TS);
-      if (key === 'base') {
-        // Riveted deck plates
-        c.fillStyle = P.g[3];
-        c.fillRect(X, Y, TS, 1);
-        c.fillRect(X, Y, 1, TS);
-        c.fillStyle = P.g[2];
-        c.fillRect(X + 1, Y + 1, TS - 1, 1);
-        c.fillRect(X + 1, Y + 1, 1, TS - 1);
-        c.fillStyle = P.g[1];
-        if (hash(x, y, 1) < 0.5) c.fillRect(X + 4, Y + 15, 24, 2);
-        else c.fillRect(X + 15, Y + 4, 2, 24);
-        c.fillStyle = P.g[2];
-        for (const [rx, ry] of [[3, 3], [28, 3], [3, 28], [28, 28]]) c.fillRect(X + rx, Y + ry, 2, 2);
-        if (hash(x, y, 2) < 0.08) {
-          c.fillStyle = '#c8a028';
-          for (let i = 0; i < 4; i++) c.fillRect(X + 2 + i * 8, Y + 26, 4, 4);
+    /* A leafy clump: several small jagged leaves rather than one ball. */
+    leaf(x, y, r) {
+      const c = this.ctx, seed = (x * 31 + y * 17) | 0;
+      const n = Math.max(3, Math.round(r * 1.2));
+      for (let pass = 0; pass < 3; pass++) {
+        c.fillStyle = LEAF[pass];
+        for (let k = 0; k < n; k++) {
+          const a = hash(seed, k, 1) * Math.PI * 2, d = r * 0.75 * hash(seed, k, 2);
+          const lx = x + Math.cos(a) * d - pass * 0.8, ly = y + Math.sin(a) * d - pass * 1;
+          const lr = (r * 0.42 + 1) * (1 - pass * 0.25);
+          c.beginPath();
+          c.moveTo(lx, ly - lr);
+          c.lineTo(lx + lr * 0.9, ly + lr * 0.2);
+          c.lineTo(lx + lr * 0.2, ly + lr);
+          c.lineTo(lx - lr * 0.9, ly + lr * 0.4);
+          c.closePath();
+          c.fill();
         }
-        return;
       }
-      const n = 22;
-      for (let i = 0; i < n; i++) {
-        const r1 = hash(x, y, i * 3 + 1), r2 = hash(x, y, i * 3 + 2), r3 = hash(x, y, i * 3 + 3);
-        c.fillStyle = P.g[1 + Math.floor(r3 * 3)];
-        if (key === 'desert') c.fillRect(X + Math.floor(r1 * 31), Y + Math.floor(r2 * 31), 2, 1);
-        else c.fillRect(X + Math.floor(r1 * 31), Y + Math.floor(r2 * 30), 1, 2);
+      c.fillStyle = LEAF[3];
+      for (let k = 0; k < 3; k++) c.fillRect(Math.round(x - r * 0.5 + hash(seed, k, 5) * r), Math.round(y - r * 0.6 + hash(seed, k, 6) * r * 0.6), 1, 1);
+    }
+
+    rockBlob(b) {
+      const c = this.ctx, R = this.rock;
+      const g = c.createRadialGradient(b.x - b.r * 0.35, b.y - b.r * 0.45, b.r * 0.1, b.x, b.y, b.r * 1.05);
+      g.addColorStop(0, R[3]);
+      g.addColorStop(0.38, R[2]);
+      g.addColorStop(0.78, R[1]);
+      g.addColorStop(1, R[0]);
+      c.fillStyle = g;
+      c.beginPath(); c.arc(b.x, b.y, b.r, 0, Math.PI * 2); c.fill();
+      // lumpy highlights
+      c.fillStyle = R[3];
+      for (let k = 0; k < 3; k++) {
+        const a = -2.2 + hash(b.x | 0, b.y | 0, k) * 1.4, rr = b.r * (0.35 + hash(b.y | 0, b.x | 0, k) * 0.35);
+        c.globalAlpha = 0.45;
+        c.beginPath(); c.arc(b.x + Math.cos(a) * rr, b.y + Math.sin(a) * rr, b.r * 0.22, 0, Math.PI * 2); c.fill();
       }
-      if (key === 'desert' && hash(x, y, 9) < 0.18) {
-        c.fillStyle = P.crack;
-        let cx = X + 6 + Math.floor(hash(x, y, 10) * 18), cy = Y + 6;
-        for (let k = 0; k < 9; k++) { c.fillRect(cx, cy, 1, 2); cx += Math.floor(hash(x, y, 20 + k) * 3) - 1; cy += 2; }
-      }
-      if (key === 'desert' && hash(x, y, 11) < 0.05) {
-        // small crater
-        c.fillStyle = P.g[3];
-        c.beginPath(); c.ellipse(X + 16, Y + 16, 9, 7, 0, 0, Math.PI * 2); c.fill();
-        c.fillStyle = P.g[2];
-        c.beginPath(); c.ellipse(X + 17, Y + 17, 6, 4, 0, 0, Math.PI * 2); c.fill();
-      }
-      if ((key === 'forest' || key === 'river') && hash(x, y, 12) < 0.12) {
-        c.fillStyle = hash(x, y, 13) < 0.5 ? '#d8c84a' : '#e8e8d8';
-        c.fillRect(X + 4 + Math.floor(hash(x, y, 14) * 24), Y + 4 + Math.floor(hash(x, y, 15) * 24), 2, 2);
+      c.globalAlpha = 1;
+    }
+
+    foliageEdge(tx, ty) {
+      const open = v => v !== T.VOID && v !== T.ROCK && v !== T.WATER;
+      const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+      for (const [dx, dy] of dirs) {
+        if (!open(this.tile(tx + dx, ty + dy))) continue;
+        for (let k = 0; k < 5; k++) {
+          if (hash(tx, ty, 40 + k + dx * 3 + dy * 5) < 0.2) continue;
+          const along = (hash(tx, ty, 50 + k + dx + dy * 2) - 0.5) * 30;
+          const out = 10 + hash(tx, ty, 70 + k) * 7;
+          const x = tx * TS + 16 + dx * out + (dy !== 0 ? along : 0);
+          const y = ty * TS + 16 + dy * out + (dx !== 0 ? along : 0);
+          this.leaf(x, y, 3 + hash(tx, ty, 60 + k) * 3);
+        }
       }
     }
 
-    paintFloor(x, y) {
-      const c = this.ctx, P = this.pal, X = x * TS, Y = y * TS;
-      const v = this.tile(x, y);
-      switch (v) {
-        case T.WATER: {
-          c.fillStyle = P.water;
-          c.fillRect(X, Y, TS, TS);
-          c.fillStyle = P.waterLo;
-          for (let i = 0; i < 4; i++) c.fillRect(X + Math.floor(hash(x, y, 40 + i) * 24), Y + 3 + i * 8, 8, 1);
-          c.fillStyle = P.waterHi;
-          for (let i = 0; i < 5; i++) c.fillRect(X + Math.floor(hash(x, y, 50 + i) * 26), Y + 1 + i * 6 + Math.floor(hash(x, y, 60 + i) * 3), 6, 1);
-          // shoreline foam
-          c.fillStyle = 'rgba(230,240,250,0.55)';
-          if (this.tile(x, y - 1) !== T.WATER) c.fillRect(X, Y, TS, 2);
-          if (this.tile(x, y + 1) !== T.WATER) c.fillRect(X, Y + TS - 2, TS, 2);
-          if (this.tile(x - 1, y) !== T.WATER) c.fillRect(X, Y, 2, TS);
-          if (this.tile(x + 1, y) !== T.WATER) c.fillRect(X + TS - 2, Y, 2, TS);
-          return;
-        }
-        case T.BRIDGE: {
-          c.fillStyle = P.water;
-          c.fillRect(X, Y, TS, TS);
-          c.fillStyle = P.bridge;
-          c.fillRect(X, Y + 1, TS, TS - 2);
-          c.fillStyle = P.bridgeHi;
-          for (let i = 0; i < 8; i++) c.fillRect(X + i * 4, Y + 1, 1, TS - 2);
-          c.fillStyle = 'rgba(0,0,0,0.25)';
-          for (let i = 0; i < 8; i++) c.fillRect(X + i * 4 + 3, Y + 1, 1, TS - 2);
-          if (this.tile(x - 1, y) !== T.BRIDGE) { c.fillStyle = '#3a2a1a'; c.fillRect(X, Y, 3, TS); }
-          if (this.tile(x + 1, y) !== T.BRIDGE) { c.fillStyle = '#3a2a1a'; c.fillRect(X + TS - 3, Y, 3, TS); }
-          return;
-        }
-        case T.LIFT:
-        case T.PAD_USED: {
-          this.paintGround(x, y);
-          const used = v === T.PAD_USED;
-          // find the pad's shared centre corner
-          const right = this.isPad(x + 1, y), down = this.isPad(x, y + 1);
-          const ccx = right ? X + TS : X, ccy = down ? Y + TS : Y;
-          c.save();
-          c.beginPath(); c.rect(X, Y, TS, TS); c.clip();
-          c.fillStyle = used ? '#3a3e44' : '#22262c';
-          c.fillRect(ccx - 30, ccy - 30, 60, 60);
-          // hazard border
-          c.fillStyle = used ? '#6a6a5a' : '#f2c230';
-          c.fillRect(ccx - 30, ccy - 30, 60, 3); c.fillRect(ccx - 30, ccy + 27, 60, 3);
-          c.fillRect(ccx - 30, ccy - 30, 3, 60); c.fillRect(ccx + 27, ccy - 30, 3, 60);
-          c.fillStyle = '#22262c';
-          for (let i = -30; i < 30; i += 6) { c.fillRect(ccx + i, ccy - 30, 3, 3); c.fillRect(ccx + i, ccy + 27, 3, 3); c.fillRect(ccx - 30, ccy + i, 3, 3); c.fillRect(ccx + 27, ccy + i, 3, 3); }
-          c.strokeStyle = used ? '#55595e' : '#2dd4bf';
-          c.lineWidth = 2;
-          for (const r of [22, 15, 8]) { c.beginPath(); c.arc(ccx, ccy, r, 0, Math.PI * 2); c.stroke(); }
-          c.fillStyle = used ? '#55595e' : '#f2c230';
-          c.fillRect(ccx - 2, ccy - 2, 4, 4);
-          c.restore();
-          return;
-        }
-        case T.JUMP: {
-          this.paintGround(x, y);
-          c.fillStyle = '#2a2e34';
-          c.fillRect(X + 2, Y + 2, TS - 4, TS - 4);
-          c.fillStyle = '#f08a24';
-          for (let k = 0; k < 3; k++) {
-            const yy = Y + 6 + k * 8;
-            for (let i = 0; i < 8; i++) {
-              c.fillRect(X + 8 + i, yy + 7 - i, 2, 2);
-              c.fillRect(X + 22 - i, yy + 7 - i, 2, 2);
-            }
-          }
-          c.fillStyle = '#f2c230';
-          c.fillRect(X + 2, Y + 2, TS - 4, 2);
-          return;
-        }
-        case T.RUBBLE: {
-          this.paintGround(x, y);
-          for (let i = 0; i < 14; i++) {
-            c.fillStyle = P.rubble[Math.floor(hash(x, y, 70 + i) * 3)];
-            const w = 2 + Math.floor(hash(x, y, 90 + i) * 4);
-            c.fillRect(X + 2 + Math.floor(hash(x, y, 110 + i) * 26), Y + 2 + Math.floor(hash(x, y, 130 + i) * 26), w, w - 1);
-          }
-          c.fillStyle = 'rgba(20,14,8,0.25)';
-          c.beginPath(); c.ellipse(X + 16, Y + 16, 13, 11, 0, 0, Math.PI * 2); c.fill();
-          return;
-        }
-        default:
-          this.paintGround(x, y);
-          if (this.mode === 'floor' && this.isTall(v)) {
-            c.fillStyle = v === T.TREE ? 'rgba(0,0,0,0.25)' : P.foot;
-            if (v !== T.TREE) c.fillRect(X, Y, TS, TS);
-          }
+    bush(tx, ty) {
+      const c = this.ctx;
+      c.fillStyle = 'rgba(0,0,0,0.3)';
+      c.beginPath(); c.ellipse(tx * TS + 19, ty * TS + 20, 15, 13, 0, 0, Math.PI * 2); c.fill();
+      for (let k = 0; k < 9; k++) {
+        const x = tx * TS + 4 + hash(tx, ty, 70 + k) * 24, y = ty * TS + 4 + hash(tx, ty, 80 + k) * 24;
+        this.leaf(x, y, 5 + hash(tx, ty, 90 + k) * 4);
       }
     }
 
-    isPad(x, y) { const v = this.tile(x, y); return v === T.LIFT || v === T.PAD_USED; }
-
-    paintTall(x, y, v) {
-      if (this.mode === 'floor') return;
-      const c = this.ctx, P = this.pal, X = x * TS, Y = y * TS, key = this.stage.theme.key;
-      const same = (dx, dy) => this.tile(x + dx, y + dy) === v;
-      if (v === T.TREE) {
-        const ox = X + 16 + Math.floor((hash(x, y, 3) - 0.5) * 6), oy = Y + 16 + Math.floor((hash(x, y, 4) - 0.5) * 6);
-        c.fillStyle = P.tree[2];
-        c.beginPath(); c.arc(ox, oy, 15, 0, Math.PI * 2); c.fill();
-        c.fillStyle = P.tree[0];
-        c.beginPath(); c.arc(ox - 1, oy - 1, 13, 0, Math.PI * 2); c.fill();
-        c.fillStyle = P.tree[1];
-        for (let i = 0; i < 7; i++) {
-          const a = hash(x, y, 30 + i) * Math.PI * 2, r = hash(x, y, 40 + i) * 8;
-          c.beginPath(); c.arc(ox - 3 + Math.cos(a) * r, oy - 3 + Math.sin(a) * r, 3 + hash(x, y, 50 + i) * 2, 0, Math.PI * 2); c.fill();
+    groundDetail(tx, ty) {
+      const c = this.ctx, X = tx * TS, Y = ty * TS, h = hash(tx, ty, 3);
+      if (this.key === 'city') {
+        c.fillStyle = '#d4d2dc';
+        if (h < 0.16) {
+          for (let k = 0; k < 4; k++) c.fillRect(X + 3 + k * 8, Y + 2, 2, 12);
+          c.fillRect(X + 3, Y + 14, 26, 2);
+        } else if (h < 0.3) {
+          for (let k = 0; k < 2; k++) c.fillRect(X + 2 + k * 16, Y + 15, 10, 2);
+        } else if (h < 0.36) {
+          c.fillStyle = '#e8902a';
+          c.fillRect(X + 4, Y + 12, 24, 3);
+          for (const lx of [6, 24]) { c.fillRect(X + lx, Y + 15, 2, 6); c.fillRect(X + lx - 2, Y + 20, 6, 2); }
+          c.fillStyle = '#ffd08a';
+          c.fillRect(X + 4, Y + 12, 24, 1);
+        } else if (h < 0.42) {
+          c.strokeStyle = 'rgba(212,210,220,0.7)';
+          c.setLineDash([3, 3]);
+          c.lineWidth = 1;
+          c.beginPath(); c.arc(X + 16, Y + 16, 13, 0, Math.PI * 2); c.stroke();
+          c.setLineDash([]);
         }
-        c.fillStyle = 'rgba(255,255,220,0.18)';
-        c.beginPath(); c.arc(ox - 5, oy - 6, 5, 0, Math.PI * 2); c.fill();
-        return;
-      }
-      const top = v === T.WALL ? P.wallTop : v === T.BLOCK ? P.block : P.fort;
-      const hi = v === T.WALL ? P.wallHi : v === T.BLOCK ? P.blockHi : P.fortHi;
-      const lo = v === T.WALL ? P.wallLo : v === T.BLOCK ? P.blockLo : P.fortLo;
-      const bev = v === T.BLOCK ? 3 : 4;
-      c.fillStyle = top;
-      c.fillRect(X, Y, TS, TS);
-      // Bevel only on edges not joined to the same tile type, so runs read as one mass
-      c.fillStyle = hi;
-      if (!same(0, -1)) c.fillRect(X, Y, TS, bev);
-      if (!same(-1, 0)) c.fillRect(X, Y, bev, TS);
-      c.fillStyle = lo;
-      if (!same(0, 1)) c.fillRect(X, Y + TS - bev, TS, bev);
-      if (!same(1, 0)) c.fillRect(X + TS - bev, Y, bev, TS);
-
-      if (v === T.BLOCK) {
-        c.fillStyle = lo;
-        c.fillRect(X + 6, Y + 6, TS - 12, 2);
-        c.fillRect(X + 6, Y + TS - 8, TS - 12, 2);
-        for (let i = 0; i < 18; i++) c.fillRect(X + 7 + i, Y + 7 + i, 2, 2);
-        c.fillStyle = hi;
-        c.fillRect(X + 6, Y + 8, 2, TS - 16);
-      } else if (v === T.WALL) {
-        if (key === 'base') {
-          c.fillStyle = P.wallLo;
+      } else if (this.key === 'base') {
+        if (h < 0.1) {
+          c.fillStyle = '#d8a820';
+          for (let k = 0; k < 4; k++) c.fillRect(X + 2 + k * 8, Y + 26, 4, 4);
+        } else if (h < 0.16) {
+          c.fillStyle = '#2a2c32';
           c.fillRect(X + 8, Y + 8, 16, 16);
-          c.fillStyle = (x + y) % 3 === 0 ? P.light : '#5a6a7e';
-          c.fillRect(X + 13, Y + 13, 6, 6);
-        } else if (key === 'desert') {
-          c.fillStyle = P.wallLo;
-          for (let i = 0; i < 6; i++) c.fillRect(X + 5 + Math.floor(hash(x, y, 80 + i) * 20), Y + 5 + Math.floor(hash(x, y, 90 + i) * 20), 3, 2);
-          c.fillStyle = P.wallHi;
-          for (let i = 0; i < 4; i++) c.fillRect(X + 5 + Math.floor(hash(x, y, 100 + i) * 20), Y + 5 + Math.floor(hash(x, y, 110 + i) * 20), 2, 1);
-        } else {
-          // stone blocks
-          c.fillStyle = P.wallLo;
-          c.fillRect(X, Y + 15, TS, 1);
-          c.fillRect(X + ((y % 2) ? 10 : 22), Y, 1, 15);
-          c.fillRect(X + ((y % 2) ? 22 : 10), Y + 16, 1, 16);
+          c.fillStyle = '#5a5c64';
+          for (let k = 0; k < 4; k++) c.fillRect(X + 9, Y + 10 + k * 4, 14, 1);
         }
-      } else if (v === T.FORT) {
-        c.fillStyle = P.fortLo;
-        c.fillRect(X, Y + 15, TS, 2);
-        c.fillRect(X + 15, Y, 2, TS);
-        c.fillStyle = '#c84a2a';
-        if ((x + y) % 2 === 0) c.fillRect(X + 4, Y + 4, 4, 2);
+      } else if (h < 0.1) {
+        // grass tufts / pebbles
+        c.fillStyle = this.key === 'sand' ? '#c8b88e' : '#9aa83a';
+        for (let k = 0; k < 4; k++) c.fillRect(X + 3 + hash(tx, ty, 20 + k) * 26, Y + 3 + hash(tx, ty, 30 + k) * 26, 2, 2);
       }
+    }
+
+    crater(x, y, r, seed) {
+      const c = this.ctx;
+      c.fillStyle = '#121212';
+      c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+      for (let k = 0; k < 9; k++) {
+        const a = hash(seed, k, 1) * Math.PI * 2, d = r * (0.5 + hash(seed, k, 2) * 0.6);
+        c.fillStyle = k % 3 === 0 ? '#3c3c3c' : '#262626';
+        c.beginPath(); c.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, r * 0.35, 0, Math.PI * 2); c.fill();
+      }
+      for (let k = 0; k < 8; k++) {
+        c.fillStyle = k % 2 ? '#b8281e' : '#6a6a6a';
+        c.fillRect(Math.round(x + (hash(seed, k, 3) - 0.5) * r * 1.6), Math.round(y + (hash(seed, k, 4) - 0.5) * r * 1.6), 2, 2);
+      }
+    }
+
+    shore(tx, ty) {
+      const c = this.ctx, X = tx * TS, Y = ty * TS;
+      const land = v => v !== T.WATER && v !== T.BRIDGE && v !== T.VOID;
+      c.fillStyle = 'rgba(220,245,240,0.55)';
+      if (land(this.tile(tx, ty - 1))) c.fillRect(X, Y, TS, 2);
+      if (land(this.tile(tx, ty + 1))) c.fillRect(X, Y + TS - 2, TS, 2);
+      if (land(this.tile(tx - 1, ty))) c.fillRect(X, Y, 2, TS);
+      if (land(this.tile(tx + 1, ty))) c.fillRect(X + TS - 2, Y, 2, TS);
+    }
+
+    bridge(tx, ty) {
+      const c = this.ctx, X = tx * TS, Y = ty * TS;
+      c.fillStyle = '#7a5434';
+      c.fillRect(X, Y + 1, TS, TS - 2);
+      c.fillStyle = '#a07450';
+      for (let i = 0; i < 8; i++) c.fillRect(X + i * 4, Y + 1, 3, TS - 2);
+      c.fillStyle = '#3a2614';
+      if (this.tile(tx - 1, ty) !== T.BRIDGE) c.fillRect(X, Y, 3, TS);
+      if (this.tile(tx + 1, ty) !== T.BRIDGE) c.fillRect(X + TS - 3, Y, 3, TS);
+    }
+
+    jumpPad(tx, ty) {
+      const c = this.ctx, X = tx * TS, Y = ty * TS;
+      c.fillStyle = '#9a9ca4';
+      c.fillRect(X, Y, 2, TS); c.fillRect(X + TS - 2, Y, 2, TS);
+      for (const oy of [4, 16]) {
+        c.fillStyle = '#1a2a8a';
+        c.beginPath(); c.moveTo(X + 6, Y + oy + 10); c.lineTo(X + 16, Y + oy); c.lineTo(X + 26, Y + oy + 10); c.lineTo(X + 26, Y + oy + 14); c.lineTo(X + 16, Y + oy + 4); c.lineTo(X + 6, Y + oy + 14); c.closePath(); c.fill();
+        c.fillStyle = '#3a5af0';
+        c.beginPath(); c.moveTo(X + 6, Y + oy + 10); c.lineTo(X + 16, Y + oy); c.lineTo(X + 26, Y + oy + 10); c.lineTo(X + 26, Y + oy + 12); c.lineTo(X + 16, Y + oy + 2); c.lineTo(X + 6, Y + oy + 12); c.closePath(); c.fill();
+      }
+    }
+
+    liftRing(x, y, used) {
+      const c = this.ctx;
+      if (used) {
+        c.strokeStyle = 'rgba(170,170,180,0.45)';
+        c.setLineDash([4, 4]);
+        c.lineWidth = 2;
+        c.beginPath(); c.arc(x, y, 42, 0, Math.PI * 2); c.stroke();
+        c.setLineDash([]);
+        return;
+      }
+      c.strokeStyle = 'rgba(20,40,60,0.5)';
+      c.lineWidth = 4;
+      c.beginPath(); c.arc(x + 1, y + 2, 42, 0, Math.PI * 2); c.stroke();
+      c.strokeStyle = '#5ab0e0';
+      c.lineWidth = 4;
+      c.beginPath(); c.arc(x, y, 42, 0, Math.PI * 2); c.stroke();
+      c.strokeStyle = '#d4f0ff';
+      c.lineWidth = 2;
+      c.beginPath(); c.arc(x, y, 42, 0, Math.PI * 2); c.stroke();
+    }
+
+    fortress(f) {
+      const c = this.ctx;
+      const vs = f.verts.map(([x, y]) => [x * TS, y * TS]);
+      const path = scale => {
+        c.beginPath();
+        vs.forEach(([x, y], i) => {
+          const px = f.cx * TS + (x - f.cx * TS) * scale, py = f.cy * TS + (y - f.cy * TS) * scale;
+          if (i) c.lineTo(px, py); else c.moveTo(px, py);
+        });
+        c.closePath();
+      };
+      c.save();
+      // drop shadow
+      c.translate(5, 6);
+      path(1);
+      c.fillStyle = 'rgba(0,0,0,0.35)';
+      c.fill();
+      c.restore();
+      path(1);
+      c.fillStyle = this.stonePattern;
+      c.fill();
+      c.lineWidth = 4;
+      c.strokeStyle = '#2a2e3c';
+      c.stroke();
+      c.lineWidth = 1.5;
+      c.strokeStyle = '#9aa2b6';
+      path(0.97);
+      c.stroke();
+      // seams to the vertices and an inner ring
+      c.strokeStyle = '#3e4252';
+      c.lineWidth = 2;
+      for (const [x, y] of vs) { c.beginPath(); c.moveTo(f.cx * TS, f.cy * TS); c.lineTo(x, y); c.stroke(); }
+      path(0.55);
+      c.stroke();
+      path(0.3);
+      c.fillStyle = '#4a4e5e';
+      c.fill();
+    }
+
+    block(tx, ty) {
+      const c = this.ctx, X = tx * TS, Y = ty * TS;
+      if (this.key === 'city') {
+        c.fillStyle = '#3c6a28';
+        c.fillRect(X, Y, TS, TS);
+        c.fillStyle = '#2a6ad8';
+        c.fillRect(X + 3, Y + 3, TS - 6, TS - 6);
+        const g = c.createRadialGradient(X + 13, Y + 12, 2, X + 16, Y + 16, 18);
+        g.addColorStop(0, '#ffffff'); g.addColorStop(0.5, '#c4c4cc'); g.addColorStop(1, '#6a6a74');
+        c.fillStyle = g;
+        c.beginPath();
+        c.moveTo(X + 5, Y + 5);
+        c.quadraticCurveTo(X + 16, Y + 1, X + 27, Y + 5);
+        c.quadraticCurveTo(X + 31, Y + 16, X + 27, Y + 27);
+        c.quadraticCurveTo(X + 16, Y + 31, X + 5, Y + 27);
+        c.quadraticCurveTo(X + 1, Y + 16, X + 5, Y + 5);
+        c.fill();
+        return;
+      }
+      if (this.key === 'base') {
+        c.fillStyle = '#5a3a2a';
+        c.fillRect(X, Y, TS, TS);
+        c.fillStyle = '#7a5038';
+        c.fillRect(X + 1, Y + 1, TS - 2, TS - 2);
+        c.fillStyle = '#3a8ad0';
+        c.fillRect(X + 3, Y + 4, 2, 24); c.fillRect(X + 27, Y + 4, 2, 24); c.fillRect(X + 4, Y + 26, 24, 2);
+        const g = c.createRadialGradient(X + 13, Y + 12, 1, X + 16, Y + 15, 10);
+        g.addColorStop(0, '#b8d4ff'); g.addColorStop(0.4, '#3a6ae0'); g.addColorStop(1, '#14286a');
+        c.fillStyle = g;
+        c.beginPath(); c.arc(X + 16, Y + 15, 9, 0, Math.PI * 2); c.fill();
+        return;
+      }
+      // field bunker
+      c.fillStyle = '#3a3c44';
+      c.fillRect(X + 1, Y + 1, TS - 2, TS - 2);
+      c.fillStyle = '#7a7e88';
+      c.fillRect(X + 3, Y + 3, TS - 6, TS - 6);
+      c.fillStyle = '#a8acb6';
+      c.fillRect(X + 3, Y + 3, TS - 6, 3);
+      c.fillRect(X + 3, Y + 3, 3, TS - 6);
+      c.fillStyle = '#4a4e58';
+      c.fillRect(X + 3, Y + TS - 6, TS - 6, 3);
+      c.fillRect(X + 9, Y + 13, 14, 4);
+      c.fillStyle = '#e83a2a';
+      c.fillRect(X + 15, Y + 7, 2, 2);
     }
   }
 
+  /* Deterministic rock blobs for a ROCK tile. */
+  function rockBlobs(tx, ty) {
+    const out = [], n = 2 + (hash(tx, ty, 1) < 0.5 ? 1 : 0);
+    for (let k = 0; k < n; k++) {
+      out.push({
+        x: tx * TS + 16 + (hash(tx, ty, 10 + k) - 0.5) * 16,
+        y: ty * TS + 16 + (hash(tx, ty, 20 + k) - 0.5) * 16,
+        r: 12 + hash(tx, ty, 30 + k) * 8
+      });
+    }
+    return out;
+  }
+
   global.MapTexture = MapTexture;
-  global.MAP_PALETTES = PALETTES;
+  global.rockBlobs = rockBlobs;
+  global.MAP_THEME = THEME;
+  global.ROCK_COLORS = ROCKS;
+  global.LEAF_COLORS = LEAF;
 })(window);

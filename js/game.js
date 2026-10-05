@@ -8,20 +8,21 @@
   'use strict';
 
   const TS = 32;                          // world units per map tile
-  const T = { GROUND: 0, WALL: 1, BLOCK: 2, WATER: 3, TREE: 4, LIFT: 5, JUMP: 6, FORT: 7, RUBBLE: 8, BRIDGE: 9, PAD_USED: 10 };
-  //                   G      W     B     Wa    Tr    L      J      F     R      Br     PU
-  const MOVE_BLOCK = [false, true, true, true, true, false, false, true, false, false, false];
-  const SHOT_BLOCK = [false, true, true, false, true, false, false, true, false, false, false];
-  const TALL = [0, 34, 22, 0, 30, 0, 0, 40, 0, 0, 0];   // extrusion heights for the 2.5D view
+  const T = { VOID: 0, GROUND: 1, ROCK: 2, WATER: 3, BUSH: 4, ROAD: 5, BLOCK: 6, LIFT: 7, JUMP: 8, FORT: 9, RUBBLE: 10, BRIDGE: 11, PAD_USED: 12, HOLE: 13 };
+  //                   Vo    G      Ro    Wa    Bu     Rd     Bl    Li     Ju     Fo     Ru     Br     PU     Ho
+  const MOVE_BLOCK = [true, false, true, true, false, false, true, false, false, false, false, false, false, false];
+  const SHOT_BLOCK = [false, false, true, false, false, false, true, false, false, false, false, false, false, false];
+  const TALL = [0, 0, 24, 0, 0, 0, 22, 0, 0, 0, 0, 0, 0, 0];   // extrusion heights for the 2.5D view
 
   const THEMES = [
-    { key: 'desert', name: 'DESERT ZONE' },
-    { key: 'base', name: 'MECHANICAL BASE' },
-    { key: 'forest', name: 'FOREST SECTOR' },
-    { key: 'river', name: 'RIVER DELTA' }
+    { key: 'grass', name: 'HIGHLANDS' },
+    { key: 'forest', name: 'JUNGLE RIVER' },
+    { key: 'sand', name: 'SAND LAKES' },
+    { key: 'city', name: 'CITY BLOCK' },
+    { key: 'base', name: 'ENEMY BASE' }
   ];
 
-  const STAGE_TIME = 180;
+  const STAGE_TIME = 99;
   const SHOT_SPEED = 440;
   const TURN_RATE = 2.7;
   const FWD_SPEED = 118, REV_SPEED = 74;
@@ -33,8 +34,8 @@
     turret:  { r: 14, hp: 3,  score: 400 },
     mortar:  { r: 13, hp: 3,  score: 500 },
     chopper: { r: 14, hp: 2,  score: 600, flying: true },
-    fortgun: { r: 16, hp: 6,  score: 1500 },
-    core:    { r: 46, hp: 30, score: 5000 }
+    fortgun: { r: 13, hp: 6,  score: 1500 },
+    core:    { r: 15, hp: 30, score: 5000 }
   };
 
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -61,13 +62,14 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Stage generation                                                    */
+  /* Stage generation — each stage is a floating landmass in space,      */
+  /* fringed by rock cliffs, with a pentagon fortress at the far end.    */
   /* ------------------------------------------------------------------ */
 
   function buildStage(n) {
     const theme = THEMES[(n - 1) % THEMES.length];
-    const MW = 34, MH = 92 + Math.min(n, 8) * 4;
-    for (let attempt = 0; attempt < 60; attempt++) {
+    const MW = 24, MH = 96 + Math.min(n, 8) * 4;
+    for (let attempt = 0; attempt < 80; attempt++) {
       const s = tryBuild(n, theme, MW, MH, mulberry32(n * 7919 + attempt * 104729 + 17));
       if (s) return s;
     }
@@ -77,93 +79,133 @@
   function tryBuild(n, theme, MW, MH, rng) {
     const R = (a, b) => a + rng() * (b - a);
     const RI = (a, b) => Math.floor(R(a, b + 1));
-    const map = new Uint8Array(MW * MH);
+    const key = theme.key;
+    const map = new Uint8Array(MW * MH);          // all VOID
     const hp = new Uint8Array(MW * MH);
     const reserved = new Uint8Array(MW * MH);
     const inside = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH;
-    const at = (x, y) => (inside(x, y) ? map[y * MW + x] : T.WALL);
+    const at = (x, y) => (inside(x, y) ? map[y * MW + x] : T.VOID);
     const set = (x, y, v) => {
       if (!inside(x, y)) return;
       map[y * MW + x] = v;
-      hp[y * MW + x] = v === T.BLOCK ? 3 : v === T.TREE ? 1 : 0;
+      hp[y * MW + x] = v === T.BLOCK ? 3 : 0;
     };
     const reserve = (x0, y0, w, h) => {
       for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (inside(x, y)) reserved[y * MW + x] = 1;
     };
 
-    for (let x = 0; x < MW; x++) { set(x, 0, T.WALL); set(x, MH - 1, T.WALL); }
-    for (let y = 0; y < MH; y++) { set(0, y, T.WALL); set(MW - 1, y, T.WALL); }
+    // 1. Carve the island: a meandering band of ground with rocky rims, space beyond
+    const arenaY = 17;
+    const phase = R(0, TAU), amp = R(1.8, 3.2), freq = R(0.05, 0.08);
+    const cxAt = y => {
+      const c = MW / 2 + amp * Math.sin(y * freq + phase) + 1.1 * Math.sin(y * freq * 2.3 + phase * 1.7);
+      return lerp(MW / 2, c, clamp((y - arenaY) / 8, 0, 1));
+    };
+    const hwAt = y => {
+      let h = 6.4 + 1.3 * Math.sin(y * 0.13 + phase * 2.1) + 0.7 * Math.sin(y * 0.37 + phase);
+      h = lerp(MW / 2 - 1.4, h, clamp((y - (arenaY - 3)) / 6, 0, 1));
+      if (y > MH - 9) h = Math.max(h, 6);
+      return h;
+    };
+    for (let y = 1; y < MH - 1; y++) {
+      const cx = cxAt(y), hw = hwAt(y);
+      for (let x = 0; x < MW; x++) {
+        const d = Math.abs(x + 0.5 - cx), edge = hw + (rng() - 0.5) * 1.1;
+        if (d < edge - 1.1) set(x, y, T.GROUND);
+        else if (d < edge + 0.6) set(x, y, T.ROCK);
+      }
+    }
+    for (let x = 0; x < MW; x++) {
+      if (at(x, 1) === T.GROUND) set(x, 1, T.ROCK);
+      if (at(x, MH - 2) === T.GROUND) set(x, MH - 2, T.ROCK);
+    }
+    reserve(0, 0, MW, arenaY + 1);
+    reserve(0, MH - 8, MW, 8);
 
-    // Fortress arena at the far (north) end, sealed by a wall with one gate
-    const cx = MW >> 1;
-    const fort = { x: cx - 3, y: 4, w: 7, h: 3 };
-    for (let y = fort.y; y < fort.y + fort.h; y++) for (let x = fort.x; x < fort.x + fort.w; x++) set(x, y, T.FORT);
-    const gateY = 14;
-    for (let x = 1; x < MW - 1; x++) if (Math.abs(x - cx) > 2) set(x, gateY, T.WALL);
-    for (const px of [4, MW - 5]) { set(px, 9, T.WALL); set(px, 10, T.WALL); }
-    reserve(0, 0, MW, gateY + 2);
-    reserve(0, MH - 9, MW, 9);
-
-    // Barrier bands — wall lines or rivers with gaps / bridges
+    // 2. Choke points — rock ridges or rivers across the island with a gap or bridge
     const bands = [];
-    let y = MH - 13;
-    while (y > gateY + 8) {
-      const river = (theme.key === 'river' && rng() < 0.75) || (theme.key === 'forest' && rng() < 0.3);
-      const thick = river ? RI(2, 3) : RI(1, 2);
-      const gw = river ? 3 : 4;
-      const ng = rng() < 0.55 ? 2 : 1;
+    let y = MH - 14;
+    while (y > arenaY + 7) {
+      const water = (key === 'forest' && rng() < 0.55) || (key === 'sand' && rng() < 0.5);
+      const thick = water ? 2 : RI(1, 2);
+      let x0 = MW, x1 = -1;
+      for (let x = 0; x < MW; x++) if (at(x, y) === T.GROUND) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); }
+      if (x1 - x0 < 6) { y -= 3; continue; }
+      const gw = water ? 3 : 3 + (rng() < 0.5 ? 1 : 0);
+      const ng = x1 - x0 > 11 && rng() < 0.6 ? 2 : 1;
       const gaps = [];
       for (let g = 0; g < ng; g++) {
         let gx, tries = 0;
-        do { gx = RI(2, MW - 2 - gw); } while (gaps.some(o => Math.abs(o.x0 - gx) < gw + 4) && ++tries < 30);
+        do { gx = RI(x0 + 1, x1 - gw); } while (gaps.some(o => Math.abs(o.x0 - gx) < gw + 3) && ++tries < 30);
         gaps.push({ x0: gx, x1: gx + gw - 1 });
       }
       for (let yy = y; yy < y + thick; yy++) {
-        for (let x = 1; x < MW - 1; x++) {
+        for (let x = 0; x < MW; x++) {
+          if (at(x, yy) !== T.GROUND) continue;
           const inGap = gaps.some(g => x >= g.x0 && x <= g.x1);
-          set(x, yy, inGap ? (river ? T.BRIDGE : T.GROUND) : (river ? T.WATER : T.WALL));
+          set(x, yy, inGap ? (water ? T.BRIDGE : T.GROUND) : (water ? T.WATER : T.ROCK));
         }
       }
       reserve(0, y - 1, MW, thick + 2);
-      bands.push({ y, thick, gaps, river, passed: false });
-      y -= RI(11, 15);
+      bands.push({ y, thick, gaps, river: water, passed: false });
+      y -= RI(12, 16);
     }
 
+    // 3. Theme dressing between the choke points
     const open = (x0, y0, w, h) => {
       for (let yy = y0; yy < y0 + h; yy++) for (let x = x0; x < x0 + w; x++) {
         if (!inside(x, yy) || at(x, yy) !== T.GROUND || reserved[yy * MW + x]) return false;
       }
       return true;
     };
-
-    // Scatter terrain features between the bands
-    const nFeat = Math.floor((MH - 30) / 3) + n * 2;
+    const place = (w, h, tile, sparse, pad) => {
+      const p = pad === undefined ? 1 : pad;
+      for (let tries = 0; tries < 12; tries++) {
+        const x = RI(1, MW - 1 - w), yy = RI(arenaY + 3, MH - 10);
+        if (!open(x - p, yy - p, w + p * 2, h + p * 2)) continue;
+        for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) if (!sparse || rng() < 0.7) set(x + dx, yy + dy, tile);
+        return true;
+      }
+      return false;
+    };
+    const nFeat = Math.floor(MH / 3) + n * 2;
     for (let i = 0; i < nFeat; i++) {
       const r = rng();
-      let w = 1, h = 1, tile = T.WALL, sparse = false;
-      if (theme.key === 'forest' || theme.key === 'river') {
-        if (r < 0.5) { w = RI(2, 4); h = RI(2, 3); tile = T.TREE; sparse = true; }
-        else if (r < 0.72) { w = 2; h = RI(1, 2); tile = T.BLOCK; }
-        else if (theme.key === 'river' && r < 0.85) { w = RI(2, 3); h = 2; tile = T.WATER; }
-        else { w = RI(1, 3); h = w === 1 ? RI(2, 3) : 1; }
-      } else if (theme.key === 'desert') {
-        if (r < 0.5) { w = RI(1, 3); h = RI(1, 2); }
-        else { w = RI(1, 2); h = RI(1, 2); tile = T.BLOCK; }
-      } else {
-        if (r < 0.55) { w = rng() < 0.5 ? 3 : 1; h = w === 1 ? 3 : 1; }
-        else { w = 2; h = 2; tile = T.BLOCK; }
+      switch (key) {
+        case 'grass':
+          if (r < 0.4) place(RI(1, 2), RI(1, 2), T.ROCK);
+          else if (r < 0.75) place(RI(2, 3), RI(1, 2), T.BUSH, true, 0);
+          else place(1, 1, T.BLOCK);
+          break;
+        case 'forest':
+          if (r < 0.6) place(RI(2, 4), RI(2, 3), T.BUSH, true, 0);
+          else if (r < 0.8) place(RI(1, 2), RI(1, 2), T.ROCK);
+          else place(1, 1, T.BLOCK);
+          break;
+        case 'sand':
+          if (r < 0.35) place(RI(2, 3), 2, T.WATER);
+          else if (r < 0.65) place(RI(1, 2), RI(1, 2), T.ROCK);
+          else if (r < 0.8) place(2, 1, T.BUSH, true, 0);
+          else place(1, 1, T.BLOCK);
+          break;
+        case 'city':
+          if (r < 0.5) place(2, 2, T.BLOCK);
+          else if (r < 0.75) place(1, 2, T.BUSH, false, 1);
+          else place(1, 1, T.BLOCK);
+          break;
+        default:
+          if (r < 0.5) place(rng() < 0.5 ? 2 : 1, rng() < 0.5 ? 1 : 2, T.BLOCK);
+          else if (r < 0.8) place(3, 3, T.ROAD, false, 0);
+          else place(1, 1, T.ROCK);
       }
-      const x = RI(2, MW - 2 - w), yy = RI(gateY + 3, MH - 10);
-      if (!open(x - 1, yy - 1, w + 2, h + 2)) continue;
-      for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) if (!sparse || rng() < 0.75) set(x + dx, yy + dy, tile);
     }
+    for (let i = 0; i < MH / 7; i++) place(1, 1, T.RUBBLE, false, 0);
 
-    // Lift zones (2x2) and jump pads (just south of a barrier)
+    // 4. Lift zones (2x2) and jump pads (just south of a choke point)
     const lifts = [];
-    const nLift = 1 + (n >= 3 ? 1 : 0);
-    for (let i = 0; i < nLift; i++) {
-      for (let tries = 0; tries < 80; tries++) {
-        const x = RI(3, MW - 5), yy = RI(gateY + 6, MH - 14);
+    for (let i = 0; i < 1 + (n >= 3 ? 1 : 0); i++) {
+      for (let tries = 0; tries < 300; tries++) {
+        const x = RI(2, MW - 4), yy = RI(arenaY + 6, MH - 14);
         if (!open(x - 1, yy - 1, 4, 4)) continue;
         for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) set(x + dx, yy + dy, T.LIFT);
         reserve(x - 1, yy - 1, 4, 4);
@@ -173,22 +215,40 @@
     }
     let nJump = 0;
     for (const b of bands) {
-      if (nJump >= 2 || rng() < 0.4) continue;
+      if (nJump >= 2 || rng() < 0.35) continue;
       for (let tries = 0; tries < 20; tries++) {
-        const x = RI(3, MW - 4), jy = b.y + b.thick + 1;
+        const x = RI(2, MW - 3), jy = b.y + b.thick + 1;
         if (b.gaps.some(g => x >= g.x0 - 2 && x <= g.x1 + 2)) continue;
-        if (at(x, jy) !== T.GROUND || at(x, b.y - 2) !== T.GROUND) continue;
+        if (at(x, jy) !== T.GROUND || at(x, jy + 1) !== T.GROUND || at(x, b.y - 2) !== T.GROUND || at(x, b.y - 3) !== T.GROUND) continue;
         set(x, jy, T.JUMP);
         nJump++;
         break;
       }
     }
 
-    // Connectivity / flow field from the gate (destructibles count as passable)
-    const pass = v => v !== T.WALL && v !== T.WATER && v !== T.FORT;
+    // 5. The fortress: a pentagonal stone platform with gun pyramids and a core
+    const fort = { cx: MW / 2, cy: 7.5, r: 2.1, verts: [] };
+    for (let k = 0; k < 5; k++) {
+      const a = -Math.PI / 2 + k * TAU / 5;
+      fort.verts.push([fort.cx + Math.cos(a) * fort.r, fort.cy + Math.sin(a) * fort.r]);
+    }
+    const inPent = (px, py) => {
+      let c = false;
+      for (let i = 0, j = 4; i < 5; j = i++) {
+        const [xi, yi] = fort.verts[i], [xj, yj] = fort.verts[j];
+        if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) c = !c;
+      }
+      return c;
+    };
+    for (let yy = 2; yy < 14; yy++) for (let x = 0; x < MW; x++) {
+      if (inPent(x + 0.5, yy + 0.5)) set(x, yy, T.FORT);
+    }
+
+    // 6. Connectivity + flow field from the fortress (destructibles count as passable)
+    const pass = v => v !== T.VOID && v !== T.ROCK && v !== T.WATER;
     const dist = new Int16Array(MW * MH).fill(-1);
     const q = [];
-    for (let x = cx - 2; x <= cx + 2; x++) { dist[gateY * MW + x] = 0; q.push(gateY * MW + x); }
+    for (let i = 0; i < MW * MH; i++) if (map[i] === T.FORT) { dist[i] = 0; q.push(i); }
     for (let qi = 0; qi < q.length; qi++) {
       const i = q[qi], x = i % MW, yy = (i / MW) | 0;
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -200,17 +260,17 @@
         q.push(ni);
       }
     }
-    const sx = cx, sy = MH - 4;
-    if (dist[sy * MW + sx] < 0) return null;
+    const sy = MH - 5, sx = Math.round(cxAt(sy) - 0.5);
+    if (at(sx, sy) !== T.GROUND || dist[sy * MW + sx] < 0) return null;
 
-    // Enemy placement
+    // 7. Enemies
     const spawns = [];
     const diffN = Math.min(n, 10);
-    for (let ry = gateY + 3; ry < MH - 15; ry += 6) {
+    for (let ry = arenaY + 3; ry < MH - 15; ry += 6) {
       const count = 1 + (rng() < 0.45 + diffN * 0.06 ? 1 : 0) + (diffN > 3 && rng() < 0.35 ? 1 : 0);
       for (let k = 0; k < count; k++) {
         for (let tries = 0; tries < 30; tries++) {
-          const x = RI(2, MW - 3), yy = RI(ry, ry + 5);
+          const x = RI(1, MW - 2), yy = RI(ry, ry + 5);
           const i = yy * MW + x;
           if (at(x, yy) !== T.GROUND || reserved[i] || dist[i] < 0) continue;
           if (spawns.some(s => Math.abs(s.x - x) + Math.abs(s.y - yy) < 4)) continue;
@@ -221,15 +281,15 @@
         }
       }
     }
-    for (const gx of [cx - 7, cx + 7]) if (at(gx, 11) === T.GROUND) spawns.push({ type: 'turret', x: gx, y: 11 });
-    spawns.push({ type: 'fortgun', x: fort.x + 1, y: fort.y });
-    spawns.push({ type: 'fortgun', x: fort.x + 5, y: fort.y });
-    spawns.push({ type: 'fortgun', x: fort.x + 1, y: fort.y + 2 });
-    spawns.push({ type: 'fortgun', x: fort.x + 5, y: fort.y + 2 });
-    spawns.push({ type: 'core', x: fort.x + 3, y: fort.y + 1 });
+    for (const gx of [Math.floor(fort.cx) - 7, Math.floor(fort.cx) + 6]) if (at(gx, 13) === T.GROUND) spawns.push({ type: 'turret', x: gx, y: 13 });
+    for (let k = 0; k < 5; k++) {
+      const a = -Math.PI / 2 + k * TAU / 5;
+      spawns.push({ type: 'fortgun', wx: (fort.cx + Math.cos(a) * fort.r * 0.7) * TS, wy: (fort.cy + Math.sin(a) * fort.r * 0.7) * TS, a });
+    }
+    spawns.push({ type: 'core', wx: fort.cx * TS, wy: fort.cy * TS });
 
     return {
-      n, theme, MW, MH, map, hp, fort, gateY, bands, lifts, dist, spawns,
+      n, theme, MW, MH, map, hp, fort, arenaY, bands, lifts, dist, spawns, cleared: false,
       start: { x: (sx + 0.5) * TS, y: (sy + 0.5) * TS }
     };
   }
@@ -267,8 +327,11 @@
       const s = this.stage;
       this.player = this.makePlayer(s.start.x, s.start.y);
       this.checkpoint = { x: s.start.x, y: s.start.y };
-      this.enemies = s.spawns.map(sp => this.makeEnemy(sp.type, (sp.x + 0.5) * TS, (sp.y + 0.5) * TS));
-      for (const e of this.enemies) if (e.type === 'core') e.x = (s.fort.x + 3.5) * TS;
+      this.enemies = s.spawns.map(sp => {
+        const e = this.makeEnemy(sp.type, sp.wx !== undefined ? sp.wx : (sp.x + 0.5) * TS, sp.wy !== undefined ? sp.wy : (sp.y + 0.5) * TS);
+        if (sp.a !== undefined) { e.a = sp.a; e.ta = sp.a + Math.PI / 2; }
+        return e;
+      });
       this.shots = [];
       this.eshots = [];
       this.grenades = [];
@@ -279,7 +342,7 @@
       this.coreOpen = false;
       this.clearFx = 0;
       this.setState('intro', 2.6);
-      this.say('AREA ' + n, s.theme.name, 2.6);
+      this.say('STAGE ' + String(n).padStart(2, '0'), s.theme.name, 2.6);
       this.emit('stageStart', { stage: n });
     }
 
@@ -305,7 +368,7 @@
 
     tileAt(tx, ty) {
       const s = this.stage;
-      if (tx < 0 || ty < 0 || tx >= s.MW || ty >= s.MH) return T.WALL;
+      if (tx < 0 || ty < 0 || tx >= s.MW || ty >= s.MH) return T.VOID;
       return s.map[ty * s.MW + tx];
     }
 
@@ -343,7 +406,7 @@
       for (let i = 1; i < steps; i++) {
         const k = i / steps;
         const tile = this.tileAt(Math.floor(lerp(x0, x1, k) / TS), Math.floor(lerp(y0, y1, k) / TS));
-        if (SHOT_BLOCK[tile] && tile !== T.FORT) return false;
+        if (SHOT_BLOCK[tile]) return false;
       }
       return true;
     }
@@ -351,7 +414,7 @@
     /* Direction along the flow field toward the fortress (used by the exit arrow and the autopilot). */
     guideAngle(x, y) {
       const s = this.stage;
-      if (y < (s.gateY + 0.5) * TS) {
+      if (y < s.arenaY * TS) {
         let best = null, bd = 1e9;
         for (const e of this.enemies) {
           if (e.dead || (e.type !== 'fortgun' && e.type !== 'core')) continue;
@@ -359,7 +422,7 @@
           const d = Math.hypot(e.x - x, e.y - y);
           if (d < bd) { bd = d; best = e; }
         }
-        const tx = best ? best.x : (s.fort.x + 3.5) * TS, ty = best ? best.y : (s.fort.y + 1.5) * TS;
+        const tx = best ? best.x : s.fort.cx * TS, ty = best ? best.y : s.fort.cy * TS;
         return angleTo(tx - x, ty - y);
       }
       let tx = Math.floor(x / TS), ty = Math.floor(y / TS);
@@ -394,7 +457,7 @@
 
       if (active) {
         this.timeLeft -= dt;
-        if (this.timeLeft <= 30 && !this.timeWarned) { this.timeWarned = true; this.emit('timeWarn', {}); }
+        if (this.timeLeft <= 20 && !this.timeWarned) { this.timeWarned = true; this.emit('timeWarn', {}); }
         if (this.timeLeft <= 0) { this.timeLeft = 0; this.killPlayer('time'); }
         this.spawnChoppers(dt);
       }
@@ -420,8 +483,8 @@
           this.clearFx -= dt;
           if (this.clearFx <= 0 && this.stateTimer > 2.2) {
             this.clearFx = 0.12;
-            const f = this.stage.fort;
-            this.emit('explode', { x: (f.x + Math.random() * f.w) * TS, y: (f.y + Math.random() * f.h) * TS, size: 2, enemy: 'fortgun' });
+            const f = this.stage.fort, a = Math.random() * TAU, r = Math.random() * f.r * TS;
+            this.emit('explode', { x: f.cx * TS + Math.cos(a) * r, y: f.cy * TS + Math.sin(a) * r, size: 2, enemy: 'fortgun' });
           }
           if (this.stateTimer <= 0) this.loadStage(this.stageNum + 1);
           break;
@@ -559,6 +622,8 @@
         let g = b.gaps[0];
         for (const gg of b.gaps) if (Math.abs((gg.x0 + gg.x1 + 1) / 2 * TS - p.x) < Math.abs((g.x0 + g.x1 + 1) / 2 * TS - p.x)) g = gg;
         this.checkpoint = { x: (g.x0 + g.x1 + 1) / 2 * TS, y: (b.y - 0.5) * TS };
+        this.timeLeft = STAGE_TIME;
+        this.timeWarned = false;
       }
     }
 
@@ -664,7 +729,7 @@
             break;
           }
           case 'fortgun': {
-            const see = target && d < 460 && p.y < (s.gateY + 0.5) * TS;
+            const see = target && d < 460 && p.y < s.arenaY * TS;
             if (see) e.ta = turnToward(e.ta, aim, 1.4 * dt);
             if (see && e.fireCd <= 0 && Math.abs(angDiff(e.ta, aim)) < 0.3) {
               for (const k of [-0.24, 0, 0.24]) this.enemyFire(e, e.ta + k, 165, 'shell', 22);
@@ -725,7 +790,7 @@
         const tx = Math.floor(s.x / TS), ty = Math.floor(s.y / TS), tile = this.tileAt(tx, ty);
         if (SHOT_BLOCK[tile]) {
           s.dead = true;
-          if (tile === T.BLOCK || tile === T.TREE) this.damageTile(tx, ty, 1);
+          if (tile === T.BLOCK) this.damageTile(tx, ty, 1);
           else this.emit('spark', { x: s.x - s.vx * dt, y: s.y - s.vy * dt });
         }
       }
@@ -734,17 +799,17 @@
     damageTile(tx, ty, dmg) {
       const s = this.stage, i = ty * s.MW + tx;
       const tile = s.map[i];
-      if (tile !== T.BLOCK && tile !== T.TREE) return;
+      if (tile !== T.BLOCK) return;
       s.hp[i] = Math.max(0, s.hp[i] - dmg);
       const x = (tx + 0.5) * TS, y = (ty + 0.5) * TS;
       if (s.hp[i] > 0) { this.emit('hit', { x, y }); return; }
       this.setTile(tx, ty, T.RUBBLE);
-      this.addScore(tile === T.BLOCK ? 50 : 10);
-      this.emit('explode', { x, y, size: tile === T.BLOCK ? 1 : 0.6, enemy: tile === T.BLOCK ? 'block' : 'tree' });
+      this.addScore(50);
+      this.emit('explode', { x, y, size: 1, enemy: 'block' });
     }
 
     damageEnemy(e, dmg) {
-      if (e.type === 'core' && !this.coreOpen) { this.emit('spark', { x: e.x, y: e.y + 40 }); return; }
+      if (e.type === 'core' && !this.coreOpen) { this.emit('spark', { x: e.x, y: e.y }); return; }
       e.hp -= dmg;
       e.hitFlash = 0.12;
       if (e.hp > 0) { this.emit('hit', { x: e.x, y: e.y }); return; }
@@ -769,7 +834,7 @@
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         const tile = this.tileAt(Math.floor(b.x / TS), Math.floor(b.y / TS));
-        if (SHOT_BLOCK[tile] && !(tile === T.FORT && b.fromFort) && !b.flying) {
+        if (SHOT_BLOCK[tile] && !b.flying) {
           b.dead = true;
           this.emit('spark', { x: b.x, y: b.y, enemy: true });
           continue;
@@ -831,7 +896,7 @@
         const cp = this.checkpoint;
         this.player = this.makePlayer(cp.x, cp.y);
         this.camA = 0;
-        if (this.timeLeft < 60) { this.timeLeft = 60; this.timeWarned = false; }
+        this.timeLeft = STAGE_TIME; this.timeWarned = false;
         for (const e of this.enemies) {
           if (e.type !== 'fortgun' && e.type !== 'core' && Math.hypot(e.x - cp.x, e.y - cp.y) < 150) e.dead = true;
         }
@@ -853,12 +918,11 @@
       }
       for (const b of this.eshots) b.dead = true;
       for (const g of this.grenades) if (g.owner === 'enemy') g.dead = true;
-      const f = this.stage.fort;
-      for (let y = f.y; y < f.y + f.h; y++) for (let x = f.x; x < f.x + f.w; x++) this.setTile(x, y, T.RUBBLE);
+      this.stage.cleared = true;
       this.addScore(bonus);
       this.player.invuln = 99;
       this.setState('clear', 5);
-      this.say('AREA ' + this.stageNum + ' CLEAR', 'TIME BONUS ' + bonus, 5);
+      this.say('STAGE ' + String(this.stageNum).padStart(2, '0') + ' CLEAR', 'NOW\nYOU ASSAULT ON\nNEXT STAGE!!', 5);
       this.emit('stageClear', { bonus });
     }
 
@@ -900,7 +964,7 @@
       inp.fwd = Math.abs(angDiff(p.a, goal)) < 0.7;
       const ax = Math.floor((p.x + Math.sin(p.a) * 30) / TS), ay = Math.floor((p.y - Math.cos(p.a) * 30) / TS);
       const ahead = g.tileAt(ax, ay);
-      if (ahead === T.BLOCK || ahead === T.TREE) inp.fire = true;
+      if (ahead === T.BLOCK) inp.fire = true;
     }
 
     // Unstick when wedged against scenery

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800&family=Press+Start+2P&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body data-mode="modern">
   <canvas id="screen" aria-label="Assault game screen"></canvas>
@@ -56,7 +56,7 @@
           </svg>
           <div>
             <h1 id="menuTitle">ASSAULT</h1>
-            <p class="tag">Revamped &middot; Break through enemy lines and destroy the fortress</p>
+            <p class="tag">Revamped &middot; Cross the floating islands and destroy each fortress</p>
           </div>
         </div>
       </header>
@@ -66,54 +66,48 @@
         <button class="mode-card" data-mode="classic" role="radio" aria-checked="false">
           <div class="thumb thumb-classic" aria-hidden="true">
             <svg viewBox="0 0 160 90" shape-rendering="crispEdges">
-              <rect width="160" height="90" fill="#c8a266"/>
-              <g transform="rotate(-18 80 50)">
-                <g fill="#b9925a"><rect x="12" y="20" width="3" height="1"/><rect x="40" y="70" width="3" height="1"/><rect x="120" y="30" width="3" height="1"/><rect x="100" y="80" width="3" height="1"/><rect x="60" y="10" width="3" height="1"/><rect x="140" y="60" width="3" height="1"/></g>
-                <rect x="-20" y="22" width="80" height="10" fill="rgba(60,34,8,.42)" transform="translate(4 4)"/>
-                <rect x="-20" y="22" width="80" height="10" fill="#b08c60"/><rect x="-20" y="22" width="80" height="2" fill="#c9a878"/><rect x="-20" y="30" width="80" height="2" fill="#5e4428"/>
-                <rect x="96" y="22" width="90" height="10" fill="#b08c60"/><rect x="96" y="22" width="90" height="2" fill="#c9a878"/><rect x="96" y="30" width="90" height="2" fill="#5e4428"/>
-                <rect x="112" y="48" width="10" height="10" fill="#8a6a4a"/><rect x="112" y="48" width="10" height="2" fill="#b89270"/>
-                <g transform="translate(36 52)"><rect x="0" y="0" width="12" height="14" fill="#3a2a24"/><rect x="2" y="2" width="8" height="10" fill="#b0442a"/><rect x="5" y="-6" width="2" height="9" fill="#2a2420"/></g>
-              </g>
-              <g transform="translate(73 52)"><rect x="0" y="4" width="4" height="16" fill="#3a3f48"/><rect x="12" y="4" width="4" height="16" fill="#3a3f48"/><rect x="4" y="5" width="8" height="14" fill="#d6dbe3"/><rect x="5" y="9" width="6" height="2" fill="#2f6fd8"/><rect x="7" y="-6" width="2" height="12" fill="#aab2be"/></g>
-              <rect x="79" y="36" width="2" height="5" fill="#f8e848"/>
-              <g fill="#f8e848"><path d="M80 26 l5 5 h-3 v4 h-4 v-4 h-3z"/></g>
-              <g font-family="monospace" font-size="6" fill="#fff"><text x="4" y="8">1UP</text><text x="132" y="8">TIME</text></g>
-              <g fill="#000" opacity=".1"><rect y="3" width="160" height="1"/><rect y="9" width="160" height="1"/><rect y="15" width="160" height="1"/><rect y="21" width="160" height="1"/><rect y="27" width="160" height="1"/><rect y="33" width="160" height="1"/><rect y="39" width="160" height="1"/><rect y="45" width="160" height="1"/><rect y="51" width="160" height="1"/><rect y="57" width="160" height="1"/><rect y="63" width="160" height="1"/><rect y="69" width="160" height="1"/><rect y="75" width="160" height="1"/><rect y="81" width="160" height="1"/><rect y="87" width="160" height="1"/></g>
+              <defs><radialGradient id="rk" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#e6e6ea"/><stop offset=".45" stop-color="#a0a0a6"/><stop offset="1" stop-color="#3a3a3e"/></radialGradient></defs>
+              <rect width="160" height="90" fill="#000"/>
+              <g fill="#fff"><rect x="6" y="20" width="1" height="1"/><rect x="18" y="62" width="1" height="1"/><rect x="146" y="14" width="1" height="1"/><rect x="152" y="70" width="1" height="1"/><rect x="138" y="44" width="1" height="1"/><rect x="12" y="44" width="1" height="1"/></g>
+              <rect x="40" y="0" width="80" height="90" fill="#8a7a2a"/>
+              <g fill="#746622"><rect x="52" y="18" width="10" height="4"/><rect x="88" y="40" width="14" height="5"/><rect x="60" y="66" width="12" height="4"/></g>
+              <g fill="url(#rk)" shape-rendering="auto"><circle cx="40" cy="8" r="9"/><circle cx="36" cy="24" r="10"/><circle cx="42" cy="40" r="8"/><circle cx="37" cy="56" r="10"/><circle cx="41" cy="74" r="9"/><circle cx="121" cy="10" r="10"/><circle cx="124" cy="28" r="9"/><circle cx="119" cy="46" r="10"/><circle cx="124" cy="64" r="9"/><circle cx="120" cy="82" r="10"/><circle cx="96" cy="22" r="7"/></g>
+              <g fill="#2f7a20" shape-rendering="auto"><circle cx="48" cy="12" r="2.5"/><circle cx="49" cy="30" r="2.5"/><circle cx="50" cy="60" r="2.5"/><circle cx="112" cy="20" r="2.5"/><circle cx="111" cy="50" r="2.5"/><circle cx="102" cy="26" r="2"/></g>
+              <g shape-rendering="auto"><path d="M80 34 l11 20 h-22z" fill="#c42a22"/><path d="M80 34 l0 16 -11 4z" fill="#ff6a58"/></g>
+              <g transform="translate(74 62)"><rect x="0" y="4" width="3" height="14" fill="#b8903c"/><rect x="10" y="4" width="3" height="14" fill="#b8903c"/><rect x="3" y="5" width="7" height="12" fill="#dfe3ea"/><rect x="3" y="8" width="1.5" height="7" fill="#2a50d0"/><rect x="8.5" y="8" width="1.5" height="7" fill="#2a50d0"/><rect x="6" y="-5" width="1.5" height="11" fill="#c8ced8"/></g>
+              <circle cx="66" cy="52" r="1.8" fill="#ff9ad8" shape-rendering="auto"/><circle cx="92" cy="50" r="1.8" fill="#ff9ad8" shape-rendering="auto"/>
+              <g font-family="monospace" font-size="6" font-weight="bold" fill="#f6a8d8"><text x="43" y="7">SCORE</text><text x="73" y="7">TIME</text><text x="95" y="7">TOP</text></g>
+              <g fill="#000" opacity=".12"><rect y="3" width="160" height="1"/><rect y="9" width="160" height="1"/><rect y="15" width="160" height="1"/><rect y="21" width="160" height="1"/><rect y="27" width="160" height="1"/><rect y="33" width="160" height="1"/><rect y="39" width="160" height="1"/><rect y="45" width="160" height="1"/><rect y="51" width="160" height="1"/><rect y="57" width="160" height="1"/><rect y="63" width="160" height="1"/><rect y="69" width="160" height="1"/><rect y="75" width="160" height="1"/><rect y="81" width="160" height="1"/><rect y="87" width="160" height="1"/></g>
             </svg>
           </div>
           <div class="mode-body">
             <div class="mode-name">Classic <span class="kbd">1</span></div>
-            <p>The arcade look: a top-down pixel battlefield that spins around your tank, Namco-style HUD and CRT scanlines.</p>
+            <p>The arcade look: a vertical pixel screen whose floating island battlefield spins around your tank, pink SCORE&nbsp;/&nbsp;TIME HUD and CRT scanlines.</p>
           </div>
         </button>
 
         <button class="mode-card" data-mode="modern" role="radio" aria-checked="false">
           <div class="thumb thumb-modern" aria-hidden="true">
             <svg viewBox="0 0 160 90">
-              <defs>
-                <linearGradient id="tsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#06101e"/><stop offset=".6" stop-color="#1c2a3e"/><stop offset="1" stop-color="#c98a52"/></linearGradient>
-                <linearGradient id="tground" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a88050"/><stop offset="1" stop-color="#c8a266"/></linearGradient>
-              </defs>
-              <rect width="160" height="30" fill="url(#tsky)"/>
-              <path d="M0 30 L18 22 L34 27 L52 19 L70 26 L92 20 L112 27 L134 21 L160 28 V30 H0z" fill="#3a2a22"/>
-              <rect y="30" width="160" height="60" fill="url(#tground)"/>
-              <path d="M0 30 H160 V38 H0z" fill="#c98a52" opacity=".55"/>
-              <path d="M18 44 l26 0 l2 8 l-30 0z" fill="#b08c60"/><path d="M16 52 l30 0 l0 5 l-30 0z" fill="#7a5e3c"/>
-              <path d="M108 42 l30 0 l3 10 l-34 0z" fill="#b08c60"/><path d="M107 52 l34 0 l0 6 l-34 0z" fill="#7a5e3c"/>
-              <path d="M70 38 l8 0 l1 3 l-10 0z" fill="#c8502e"/><path d="M69 41 l10 0 l0 3 l-10 0z" fill="#9a3a24"/>
-              <path d="M95 46 l9 0 l1 4 l-11 0z" fill="#8a9099"/><path d="M94 50 l11 0 l0 4 l-11 0z" fill="#6e737c"/>
-              <ellipse cx="80" cy="82" rx="16" ry="4" fill="#000" opacity=".3"/>
-              <path d="M64 70 h8 v14 h-8z M88 70 h8 v14 h-8z" fill="#2a2e36"/>
-              <path d="M70 68 h20 v14 h-20z" fill="#b8c0cc"/><path d="M71 66 h18 v5 h-18z" fill="#dfe4ea"/>
-              <path d="M74 62 h12 v7 h-12z" fill="#f4f6f8"/><rect x="79" y="50" width="2.5" height="14" fill="#c8ced8"/>
-              <line x1="80" y1="48" x2="80" y2="40" stroke="#fde047" stroke-width="2" stroke-linecap="round"/>
-              <path d="M80 55 l5 5 h-3 v3 h-4 v-3 h-3z" fill="#fde047" opacity=".7"/>
+              <defs><radialGradient id="rk2" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#e6e6ea"/><stop offset=".45" stop-color="#a0a0a6"/><stop offset="1" stop-color="#3a3a3e"/></radialGradient></defs>
+              <rect width="160" height="90" fill="#030714"/>
+              <g fill="#fff" opacity=".8"><circle cx="12" cy="10" r=".6"/><circle cx="40" cy="22" r=".5"/><circle cx="70" cy="8" r=".6"/><circle cx="102" cy="18" r=".5"/><circle cx="148" cy="30" r=".6"/><circle cx="20" cy="50" r=".5"/><circle cx="140" cy="60" r=".6"/><circle cx="8" cy="78" r=".5"/></g>
+              <circle cx="130" cy="16" r="7" fill="#38a8d8"/><ellipse cx="130" cy="16" rx="12" ry="2.6" fill="none" stroke="#bae6fd" stroke-opacity=".5" stroke-width=".8"/>
+              <path d="M72 30 L88 30 L130 90 L30 90 Z" fill="#8a7a2a"/>
+              <g fill="url(#rk2)"><ellipse cx="72" cy="31" rx="3" ry="2.4"/><ellipse cx="88" cy="31" rx="3" ry="2.4"/><ellipse cx="66" cy="40" rx="4.5" ry="3.5"/><ellipse cx="94" cy="40" rx="4.5" ry="3.5"/><ellipse cx="58" cy="52" rx="6" ry="4.8"/><ellipse cx="102" cy="52" rx="6" ry="4.8"/><ellipse cx="47" cy="68" rx="8" ry="6.2"/><ellipse cx="113" cy="68" rx="8" ry="6.2"/><ellipse cx="34" cy="86" rx="10" ry="8"/><ellipse cx="126" cy="86" rx="10" ry="8"/></g>
+              <path d="M80 38 l5 8 h-10z" fill="#d4302a"/>
+              <path d="M71 50 h6 v4 h-6z" fill="#c46a9a"/><path d="M71 48.5 h6 v2 h-6z" fill="#f0b0d2"/>
+              <ellipse cx="80" cy="84" rx="12" ry="3" fill="#000" opacity=".35"/>
+              <path d="M68 70 h5 v14 h-5z M87 70 h5 v14 h-5z" fill="#8a6a2a"/><path d="M68 68 h5 v3 h-5z M87 68 h5 v3 h-5z" fill="#d8b25a"/>
+              <path d="M73 70 h14 v13 h-14z" fill="#c8ced8"/><path d="M73 67 h14 v4 h-14z" fill="#eef1f5"/>
+              <path d="M74 68 h2 v8 h-2z M84 68 h2 v8 h-2z" fill="#2a50d0"/>
+              <rect x="79" y="54" width="2" height="14" fill="#d8dde4"/>
+              <line x1="80" y1="50" x2="80" y2="44" stroke="#7ad0ff" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
           <div class="mode-body">
             <div class="mode-name">2.5D <span class="kbd">2</span></div>
-            <p>A chase camera behind your tank over a perspective battlefield, with raised walls and fortresses, lighting and particles.</p>
+            <p>The same islands from a chase camera behind your tank, floating in open space with raised boulders, fortress pyramids, lighting and particles.</p>
           </div>
         </button>
       </div>
@@ -121,10 +115,10 @@
       <div class="how">
         <div class="section-title">How to play</div>
         <ul class="rules">
-          <li>Fight through each <b>area</b> and destroy the <b>fortress</b> at the far end before the timer runs out. Follow the <b class="amber">flashing arrow</b>.</li>
-          <li>Knock out the four <b>fortress guns</b> to expose the core, then destroy it.</li>
+          <li>Cross each floating <b>stage</b> and destroy the <b>fortress</b> at the far end. The <b>timer</b> refills at every ridge you cross. Follow the <b class="amber">yellow arrow sign</b>.</li>
+          <li>Knock out the five red <b>pyramid guns</b> to expose the core, then destroy it to open the way to the next stage.</li>
           <li><b>Power Wheelie</b> rears your tank up to lob a grenade over walls. Rolling sideways dodges incoming fire.</li>
-          <li>Drive onto a <b>lift zone</b> to rise into the air and bomb from above. <b>Jump pads</b> launch you over barriers.</li>
+          <li>Drive into a blue <b>lift ring</b> to rise up and bomb from above. Blue-chevron <b>jump pads</b> launch you over ridges.</li>
         </ul>
         <div class="keys">
           <div><span class="kbd">&uarr;</span><span class="kbd">&darr;</span> / <span class="kbd">W</span><span class="kbd">S</span><em>Drive</em></div>
@@ -147,7 +141,7 @@
       <h2 id="pauseTitle">Paused</h2>
       <div class="stats">
         <div><span>Score</span><b id="pauseScore">0</b></div>
-        <div><span>Area</span><b id="pauseWave">1</b></div>
+        <div><span>Stage</span><b id="pauseWave">1</b></div>
       </div>
       <div class="stack">
         <button class="btn primary" id="resumeBtn" data-autofocus>Resume</button>
@@ -164,7 +158,7 @@
       <div class="badge" id="overBadge" hidden>New high score</div>
       <div class="stats three">
         <div><span>Score</span><b id="overScore">0</b></div>
-        <div><span>Area</span><b id="overWave">1</b></div>
+        <div><span>Stage</span><b id="overWave">1</b></div>
         <div><span>Best</span><b id="overHi">0</b></div>
       </div>
       <div class="stack">
@@ -174,11 +168,11 @@
     </div>
   </div>
 
-  <script src="js/game.js"></script>
-  <script src="js/tiles.js"></script>
-  <script src="js/audio.js"></script>
-  <script src="js/render-classic.js"></script>
-  <script src="js/render-25d.js"></script>
-  <script src="js/main.js"></script>
+  <script src="js/game.js?v=3"></script>
+  <script src="js/tiles.js?v=3"></script>
+  <script src="js/audio.js?v=3"></script>
+  <script src="js/render-classic.js?v=3"></script>
+  <script src="js/render-25d.js?v=3"></script>
+  <script src="js/main.js?v=3"></script>
 </body>
 </html>
