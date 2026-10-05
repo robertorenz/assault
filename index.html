@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Assault Revamped</title>
-  <meta name="description" content="A revamped remake of Namco's 1988 arcade tank shooter Assault, playable in a Classic pixel view or a 2.5D chase-camera view.">
+  <meta name="description" content="A revamped remake of Namco's 1988 arcade tank shooter Assault, playable in a full 3D view, a 2.5D chase-camera view or a Classic pixel view.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800&family=Press+Start+2P&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body data-mode="modern">
   <canvas id="screen" aria-label="Assault game screen"></canvas>
@@ -63,26 +63,43 @@
 
       <div class="section-title">Choose your view</div>
       <div class="modes" role="radiogroup" aria-label="View mode">
-        <button class="mode-card" data-mode="classic" role="radio" aria-checked="false">
-          <div class="thumb thumb-classic" aria-hidden="true">
-            <svg viewBox="0 0 160 90" shape-rendering="crispEdges">
-              <defs><radialGradient id="rk" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#e6e6ea"/><stop offset=".45" stop-color="#a0a0a6"/><stop offset="1" stop-color="#3a3a3e"/></radialGradient></defs>
-              <rect width="160" height="90" fill="#000"/>
-              <g fill="#fff"><rect x="6" y="20" width="1" height="1"/><rect x="18" y="62" width="1" height="1"/><rect x="146" y="14" width="1" height="1"/><rect x="152" y="70" width="1" height="1"/><rect x="138" y="44" width="1" height="1"/><rect x="12" y="44" width="1" height="1"/></g>
-              <rect x="40" y="0" width="80" height="90" fill="#8a7a2a"/>
-              <g fill="#746622"><rect x="52" y="18" width="10" height="4"/><rect x="88" y="40" width="14" height="5"/><rect x="60" y="66" width="12" height="4"/></g>
-              <g fill="url(#rk)" shape-rendering="auto"><circle cx="40" cy="8" r="9"/><circle cx="36" cy="24" r="10"/><circle cx="42" cy="40" r="8"/><circle cx="37" cy="56" r="10"/><circle cx="41" cy="74" r="9"/><circle cx="121" cy="10" r="10"/><circle cx="124" cy="28" r="9"/><circle cx="119" cy="46" r="10"/><circle cx="124" cy="64" r="9"/><circle cx="120" cy="82" r="10"/><circle cx="96" cy="22" r="7"/></g>
-              <g fill="#2f7a20" shape-rendering="auto"><circle cx="48" cy="12" r="2.5"/><circle cx="49" cy="30" r="2.5"/><circle cx="50" cy="60" r="2.5"/><circle cx="112" cy="20" r="2.5"/><circle cx="111" cy="50" r="2.5"/><circle cx="102" cy="26" r="2"/></g>
-              <g shape-rendering="auto"><path d="M80 34 l11 20 h-22z" fill="#c42a22"/><path d="M80 34 l0 16 -11 4z" fill="#ff6a58"/></g>
-              <g transform="translate(74 62)"><rect x="0" y="4" width="3" height="14" fill="#b8903c"/><rect x="10" y="4" width="3" height="14" fill="#b8903c"/><rect x="3" y="5" width="7" height="12" fill="#dfe3ea"/><rect x="3" y="8" width="1.5" height="7" fill="#2a50d0"/><rect x="8.5" y="8" width="1.5" height="7" fill="#2a50d0"/><rect x="6" y="-5" width="1.5" height="11" fill="#c8ced8"/></g>
-              <circle cx="66" cy="52" r="1.8" fill="#ff9ad8" shape-rendering="auto"/><circle cx="92" cy="50" r="1.8" fill="#ff9ad8" shape-rendering="auto"/>
-              <g font-family="monospace" font-size="6" font-weight="bold" fill="#f6a8d8"><text x="43" y="7">SCORE</text><text x="73" y="7">TIME</text><text x="95" y="7">TOP</text></g>
-              <g fill="#000" opacity=".12"><rect y="3" width="160" height="1"/><rect y="9" width="160" height="1"/><rect y="15" width="160" height="1"/><rect y="21" width="160" height="1"/><rect y="27" width="160" height="1"/><rect y="33" width="160" height="1"/><rect y="39" width="160" height="1"/><rect y="45" width="160" height="1"/><rect y="51" width="160" height="1"/><rect y="57" width="160" height="1"/><rect y="63" width="160" height="1"/><rect y="69" width="160" height="1"/><rect y="75" width="160" height="1"/><rect y="81" width="160" height="1"/><rect y="87" width="160" height="1"/></g>
+        <button class="mode-card" data-mode="three" role="radio" aria-checked="false">
+          <div class="thumb thumb-3d" aria-hidden="true">
+            <svg viewBox="0 0 160 90">
+              <defs>
+                <radialGradient id="neb3" cx=".72" cy=".25" r=".7"><stop offset="0" stop-color="#0e4a52"/><stop offset=".55" stop-color="#06142a"/><stop offset="1" stop-color="#01030a"/></radialGradient>
+                <radialGradient id="pl3" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#e8c890"/><stop offset=".5" stop-color="#c47a3a"/><stop offset="1" stop-color="#1a2a30"/></radialGradient>
+                <linearGradient id="top3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6a5c1e"/><stop offset="1" stop-color="#9a8a34"/></linearGradient>
+                <linearGradient id="und3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a4a30"/><stop offset=".4" stop-color="#4a4a52"/><stop offset="1" stop-color="#14161c"/></linearGradient>
+                <linearGradient id="beam3" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff5a3a" stop-opacity=".9"/><stop offset="1" stop-color="#ff5a3a" stop-opacity="0"/></linearGradient>
+                <radialGradient id="glo3"><stop offset="0" stop-color="#bff4ff"/><stop offset=".4" stop-color="#5ad0ff" stop-opacity=".7"/><stop offset="1" stop-color="#5ad0ff" stop-opacity="0"/></radialGradient>
+                <radialGradient id="rk3" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#e6e6ea"/><stop offset=".5" stop-color="#9a9aa2"/><stop offset="1" stop-color="#3a3a3e"/></radialGradient>
+              </defs>
+              <rect width="160" height="90" fill="url(#neb3)"/>
+              <g fill="#fff"><circle cx="10" cy="12" r=".6"/><circle cx="34" cy="6" r=".5"/><circle cx="58" cy="16" r=".6"/><circle cx="88" cy="5" r=".5"/><circle cx="150" cy="40" r=".6"/><circle cx="6" cy="44" r=".5"/><circle cx="24" cy="30" r=".4"/></g>
+              <circle cx="132" cy="22" r="15" fill="url(#pl3)"/>
+              <ellipse cx="132" cy="22" rx="26" ry="5" fill="none" stroke="#e8d8b0" stroke-opacity=".55" stroke-width="1.4" transform="rotate(-14 132 22)"/>
+              <path d="M18 70 L40 34 L120 34 L148 70 Z" fill="url(#top3)"/>
+              <path d="M18 70 L148 70 L132 76 L112 90 L96 82 L80 90 L64 82 L46 90 L32 78 Z" fill="url(#und3)"/>
+              <path d="M78 34 l4 -34 l4 34z" fill="url(#beam3)"/>
+              <path d="M74 37 L80 27 L86 37 Z" fill="#e8342a"/><path d="M80 27 L86 37 L80 36 Z" fill="#9a1a14"/>
+              <path d="M62 40 L66 34 L70 40 Z" fill="#d4302a"/><path d="M90 40 L94 34 L98 40 Z" fill="#d4302a"/>
+              <g fill="url(#rk3)"><ellipse cx="38" cy="40" rx="6" ry="4"/><ellipse cx="30" cy="54" rx="8" ry="5.5"/><ellipse cx="122" cy="40" rx="6" ry="4"/><ellipse cx="134" cy="56" rx="8" ry="5.5"/><ellipse cx="104" cy="50" rx="4" ry="3"/></g>
+              <g fill="#2f7a20"><path d="M50 52 l4 -9 l4 9z"/><path d="M112 60 l4 -9 l4 9z"/><path d="M46 62 l4 -8 l4 8z"/></g>
+              <circle cx="80" cy="47" r="7" fill="url(#glo3)"/>
+              <rect x="79" y="46" width="2" height="5" fill="#e8fbff"/>
+              <ellipse cx="80" cy="69" rx="13" ry="3" fill="#000" opacity=".4"/>
+              <path d="M68 58 h6 v11 h-6z M86 58 h6 v11 h-6z" fill="#a8883c"/>
+              <path d="M73 57 h14 v10 h-14z" fill="#c8ced8"/><path d="M73 55 h14 v3 h-14z" fill="#eef1f5"/>
+              <path d="M74.5 56 h2 v7 h-2z M83.5 56 h2 v7 h-2z" fill="#2a50d0"/>
+              <rect x="76" y="51" width="8" height="5" fill="#dfe3ea"/>
+              <rect x="79.2" y="44" width="1.6" height="9" fill="#d8dde4"/>
+              <circle cx="75.5" cy="66" r="1" fill="#fff4d0"/><circle cx="84.5" cy="66" r="1" fill="#fff4d0"/>
             </svg>
           </div>
           <div class="mode-body">
-            <div class="mode-name">Classic <span class="kbd">1</span></div>
-            <p>The arcade look: a vertical pixel screen whose floating island battlefield spins around your tank, pink SCORE&nbsp;/&nbsp;TIME HUD and CRT scanlines.</p>
+            <div class="mode-name">3D <span class="kbd">1</span><span class="new">New</span></div>
+            <p>Full 3D: a floating island over a nebula and a ringed planet, real lighting and shadows, bloom, explosions with debris, and cinematic cameras.</p>
           </div>
         </button>
 
@@ -108,6 +125,29 @@
           <div class="mode-body">
             <div class="mode-name">2.5D <span class="kbd">2</span></div>
             <p>The same islands from a chase camera behind your tank, floating in open space with raised boulders, fortress pyramids, lighting and particles.</p>
+          </div>
+        </button>
+
+        <button class="mode-card" data-mode="classic" role="radio" aria-checked="false">
+          <div class="thumb thumb-classic" aria-hidden="true">
+            <svg viewBox="0 0 160 90" shape-rendering="crispEdges">
+              <defs><radialGradient id="rk" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#e6e6ea"/><stop offset=".45" stop-color="#a0a0a6"/><stop offset="1" stop-color="#3a3a3e"/></radialGradient></defs>
+              <rect width="160" height="90" fill="#000"/>
+              <g fill="#fff"><rect x="6" y="20" width="1" height="1"/><rect x="18" y="62" width="1" height="1"/><rect x="146" y="14" width="1" height="1"/><rect x="152" y="70" width="1" height="1"/><rect x="138" y="44" width="1" height="1"/><rect x="12" y="44" width="1" height="1"/></g>
+              <rect x="40" y="0" width="80" height="90" fill="#8a7a2a"/>
+              <g fill="#746622"><rect x="52" y="18" width="10" height="4"/><rect x="88" y="40" width="14" height="5"/><rect x="60" y="66" width="12" height="4"/></g>
+              <g fill="url(#rk)" shape-rendering="auto"><circle cx="40" cy="8" r="9"/><circle cx="36" cy="24" r="10"/><circle cx="42" cy="40" r="8"/><circle cx="37" cy="56" r="10"/><circle cx="41" cy="74" r="9"/><circle cx="121" cy="10" r="10"/><circle cx="124" cy="28" r="9"/><circle cx="119" cy="46" r="10"/><circle cx="124" cy="64" r="9"/><circle cx="120" cy="82" r="10"/><circle cx="96" cy="22" r="7"/></g>
+              <g fill="#2f7a20" shape-rendering="auto"><circle cx="48" cy="12" r="2.5"/><circle cx="49" cy="30" r="2.5"/><circle cx="50" cy="60" r="2.5"/><circle cx="112" cy="20" r="2.5"/><circle cx="111" cy="50" r="2.5"/><circle cx="102" cy="26" r="2"/></g>
+              <g shape-rendering="auto"><path d="M80 34 l11 20 h-22z" fill="#c42a22"/><path d="M80 34 l0 16 -11 4z" fill="#ff6a58"/></g>
+              <g transform="translate(74 62)"><rect x="0" y="4" width="3" height="14" fill="#b8903c"/><rect x="10" y="4" width="3" height="14" fill="#b8903c"/><rect x="3" y="5" width="7" height="12" fill="#dfe3ea"/><rect x="3" y="8" width="1.5" height="7" fill="#2a50d0"/><rect x="8.5" y="8" width="1.5" height="7" fill="#2a50d0"/><rect x="6" y="-5" width="1.5" height="11" fill="#c8ced8"/></g>
+              <circle cx="66" cy="52" r="1.8" fill="#ff9ad8" shape-rendering="auto"/><circle cx="92" cy="50" r="1.8" fill="#ff9ad8" shape-rendering="auto"/>
+              <g font-family="monospace" font-size="6" font-weight="bold" fill="#f6a8d8"><text x="43" y="7">SCORE</text><text x="73" y="7">TIME</text><text x="95" y="7">TOP</text></g>
+              <g fill="#000" opacity=".12"><rect y="3" width="160" height="1"/><rect y="9" width="160" height="1"/><rect y="15" width="160" height="1"/><rect y="21" width="160" height="1"/><rect y="27" width="160" height="1"/><rect y="33" width="160" height="1"/><rect y="39" width="160" height="1"/><rect y="45" width="160" height="1"/><rect y="51" width="160" height="1"/><rect y="57" width="160" height="1"/><rect y="63" width="160" height="1"/><rect y="69" width="160" height="1"/><rect y="75" width="160" height="1"/><rect y="81" width="160" height="1"/><rect y="87" width="160" height="1"/></g>
+            </svg>
+          </div>
+          <div class="mode-body">
+            <div class="mode-name">Classic <span class="kbd">3</span></div>
+            <p>The arcade look: a vertical pixel screen whose floating island battlefield spins around your tank, pink SCORE&nbsp;/&nbsp;TIME HUD and CRT scanlines.</p>
           </div>
         </button>
       </div>
@@ -168,11 +208,20 @@
     </div>
   </div>
 
-  <script src="js/game.js?v=3"></script>
-  <script src="js/tiles.js?v=3"></script>
-  <script src="js/audio.js?v=3"></script>
-  <script src="js/render-classic.js?v=3"></script>
-  <script src="js/render-25d.js?v=3"></script>
-  <script src="js/main.js?v=3"></script>
+  <script src="js/game.js?v=4"></script>
+  <script src="js/tiles.js?v=4"></script>
+  <script src="js/audio.js?v=4"></script>
+  <script src="js/render-classic.js?v=4"></script>
+  <script src="js/render-25d.js?v=4"></script>
+  <script src="js/vendor/three/three.min.js"></script>
+  <script src="js/vendor/three/CopyShader.js"></script>
+  <script src="js/vendor/three/LuminosityHighPassShader.js"></script>
+  <script src="js/vendor/three/Pass.js"></script>
+  <script src="js/vendor/three/EffectComposer.js"></script>
+  <script src="js/vendor/three/RenderPass.js"></script>
+  <script src="js/vendor/three/ShaderPass.js"></script>
+  <script src="js/vendor/three/UnrealBloomPass.js"></script>
+  <script src="js/render-3d.js?v=4"></script>
+  <script src="js/main.js?v=4"></script>
 </body>
 </html>

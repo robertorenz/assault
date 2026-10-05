@@ -13,14 +13,26 @@
   const canvas = $('screen');
   const sound = new window.AssaultAudio();
   const renderers = { classic: new window.ClassicRenderer(canvas), modern: new window.ModernRenderer(canvas) };
+  if (window.ThreeRenderer) {
+    try { renderers.three = new window.ThreeRenderer(canvas); } catch (e) { console.warn('3D view unavailable:', e); }
+  }
+  const MODES = ['three', 'modern', 'classic'].filter(m => renderers[m]);
+  const LABEL = { three: '3D', modern: '2.5D', classic: 'Classic' };
+  const nextMode = () => MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+  if (!renderers.three) document.querySelectorAll('.mode-card[data-mode="three"]').forEach(c => c.remove());
 
-  let mode = store.get('mode', 'modern');
-  if (!renderers[mode]) mode = 'modern';
+  // ?demo=<view>&stage=<n> runs the attract-mode autopilot with the HUD on, without the menu (used for screenshots)
+  const params = new URLSearchParams(location.search);
+  const demo = renderers[params.get('demo')] ? params.get('demo') : null;
+  const demoStage = Math.max(1, parseInt(params.get('stage'), 10) || 1);
+
+  let mode = demo || store.get('mode', renderers.three ? 'three' : 'modern');
+  if (!renderers[mode]) mode = MODES[0];
   let hiScore = store.get('hi', 0) | 0;
   sound.setMuted(!!store.get('muted', false));
 
   let app = 'menu';               // menu | play | paused | over
-  let game = new Game({ hiScore });
+  let game = new Game({ hiScore, stage: demo ? demoStage : 1 });
   let demoRestart = 0;
 
   const renderer = () => renderers[mode];
@@ -54,9 +66,14 @@
     if (e.repeat) return;
 
     if (app === 'menu') {
-      if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { setMode(mode === 'classic' ? 'modern' : 'classic'); e.preventDefault(); }
-      else if (e.code === 'Digit1') setMode('classic');
+      if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        const step = e.code === 'ArrowRight' ? 1 : MODES.length - 1;
+        setMode(MODES[(MODES.indexOf(mode) + step) % MODES.length]);
+        e.preventDefault();
+      }
+      else if (e.code === 'Digit1' && renderers.three) setMode('three');
       else if (e.code === 'Digit2') setMode('modern');
+      else if (e.code === 'Digit3') setMode('classic');
       else if (e.code === 'Enter') { startGame(); e.preventDefault(); }
       return;
     }
@@ -64,7 +81,7 @@
       if (app === 'play') pause(); else if (app === 'paused') resume();
       e.preventDefault();
     } else if (e.code === 'KeyV' && (app === 'play' || app === 'paused')) {
-      setMode(mode === 'classic' ? 'modern' : 'classic');
+      setMode(nextMode());
     } else if (e.code === 'KeyM') {
       toggleMute();
     } else if (e.code === 'Enter' && app === 'over') {
@@ -121,9 +138,14 @@
     mode = m;
     store.set('mode', m);
     sound.style = m;
+    activate();
     renderers[m].reset();
-    renderers[m].hideHud = app === 'menu';
+    renderers[m].hideHud = app === 'menu' && !demo;
     syncModeUI();
+  }
+
+  function activate() {
+    for (const k in renderers) if (renderers[k].setActive) renderers[k].setActive(k === mode);
   }
 
   function syncModeUI() {
@@ -134,8 +156,8 @@
     });
     document.body.dataset.mode = mode;
     const vb = $('viewBtn');
-    if (vb) vb.textContent = mode === 'classic' ? '2.5D' : 'Classic';
-    $('pauseView').textContent = 'Switch to ' + (mode === 'classic' ? '2.5D' : 'Classic') + ' view';
+    if (vb) vb.textContent = LABEL[nextMode()];
+    $('pauseView').textContent = 'Switch to ' + LABEL[nextMode()] + ' view';
   }
 
   function showModal(id) {
@@ -224,12 +246,12 @@
   });
   $('startBtn').addEventListener('click', startGame);
   $('resumeBtn').addEventListener('click', resume);
-  $('pauseView').addEventListener('click', () => setMode(mode === 'classic' ? 'modern' : 'classic'));
+  $('pauseView').addEventListener('click', () => setMode(nextMode()));
   $('quitBtn').addEventListener('click', toMenu);
   $('againBtn').addEventListener('click', startGame);
   $('overMenuBtn').addEventListener('click', toMenu);
   $('pauseBtn').addEventListener('click', () => { if (app === 'play') pause(); else if (app === 'paused') resume(); });
-  $('viewBtn').addEventListener('click', e => { setMode(mode === 'classic' ? 'modern' : 'classic'); e.currentTarget.blur(); });
+  $('viewBtn').addEventListener('click', e => { setMode(nextMode()); e.currentTarget.blur(); });
   $('muteBtn').addEventListener('click', e => { toggleMute(); e.currentTarget.blur(); });
 
   /* ---------------- main loop ---------------- */
@@ -245,7 +267,7 @@
     if (app !== 'paused') {
       if (app === 'menu' && demoRestart > 0) {
         demoRestart -= dt;
-        if (demoRestart <= 0) { game = new Game({ hiScore }); renderer().reset(); }
+        if (demoRestart <= 0) { game = new Game({ hiScore, stage: demo ? demoStage : 1 }); renderer().reset(); }
       }
       acc += dt;
       while (acc >= STEP) {
@@ -260,10 +282,11 @@
   }
 
   sound.style = mode;
-  for (const k in renderers) renderers[k].hideHud = true;
+  for (const k in renderers) renderers[k].hideHud = !demo;
+  activate();
   $('menuHi').textContent = hiScore.toLocaleString();
   syncModeUI();
   syncMuteUI();
-  showModal('menuModal');
+  showModal(demo ? null : 'menuModal');
   requestAnimationFrame(frame);
 })();

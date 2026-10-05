@@ -32,7 +32,7 @@ html, body {
   touch-action: none;
 }
 
-#screen {
+#screen, #screen3d {
   position: fixed;
   inset: 0;
   width: 100vw;
@@ -178,7 +178,7 @@ h1 {
   color: var(--dim);
 }
 
-.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .mode-card {
   text-align: left;
   padding: 0;
@@ -322,7 +322,8 @@ h1 {
 
 @media (max-width: 720px) {
   .modal { padding: 20px 18px 18px; }
-  .modes { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .modes { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .mode-name .kbd { display: none; }
   .mode-body p { display: none; }
   .how { grid-template-columns: 1fr; }
   .keys { margin-top: 10px; }
@@ -336,3 +337,18 @@ h1 {
   .section-title { margin: 14px 0 8px; }
   .mode-body p { font-size: 14px; }
 }
+
+.mode-name .new {
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, .16);
+  border: 1px solid rgba(245, 158, 11, .5);
+  color: var(--amber-2);
+  font-family: "Rajdhani", "Segoe UI", sans-serif;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+@media (max-width: 720px) { .mode-name .new { display: none; } }
