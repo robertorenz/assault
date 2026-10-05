@@ -24,6 +24,7 @@
   let demoRestart = 0;
 
   const renderer = () => renderers[mode];
+  window.assaultGame = () => game;   // console hook for debugging
 
   /* ---------------- sizing ---------------- */
 
@@ -40,10 +41,10 @@
   /* ---------------- input ---------------- */
 
   const KEYMAP = {
+    ArrowUp: 'fwd', KeyW: 'fwd', ArrowDown: 'back', KeyS: 'back',
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
-    ArrowUp: 'fireUp', KeyW: 'fireUp', Space: 'fireUp',
-    KeyZ: 'fireLeft', KeyQ: 'fireLeft', KeyJ: 'fireLeft',
-    KeyX: 'fireRight', KeyE: 'fireRight', KeyL: 'fireRight', KeyK: 'fireUp'
+    KeyQ: 'rollL', KeyE: 'rollR',
+    Space: 'fire', KeyJ: 'fire', ShiftLeft: 'wheelie', ShiftRight: 'wheelie', KeyK: 'wheelie'
   };
   const keys = {}, touch = {}, pad = {};
 
@@ -91,12 +92,15 @@
     for (const k in pad) pad[k] = false;
     if (!gp) return;
     const b = i => !!(gp.buttons[i] && gp.buttons[i].pressed);
-    const ax = gp.axes[0] || 0;
+    const ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
     pad.left = ax < -0.4 || b(14);
     pad.right = ax > 0.4 || b(15);
-    pad.fireUp = b(0) || b(3) || b(12) || b(7);
-    pad.fireLeft = b(2) || b(4);
-    pad.fireRight = b(1) || b(5);
+    pad.fwd = ay < -0.4 || b(12);
+    pad.back = ay > 0.4 || b(13);
+    pad.fire = b(0) || b(7);
+    pad.wheelie = b(1) || b(3) || b(6);
+    pad.rollL = b(4);
+    pad.rollR = b(5);
     const start = b(9);
     if (start && !padStartWas) {
       if (app === 'play') pause(); else if (app === 'paused') resume(); else startGame();
@@ -106,7 +110,7 @@
 
   function playerInput() {
     const r = {};
-    for (const k of ['left', 'right', 'fireUp', 'fireLeft', 'fireRight']) r[k] = !!(keys[k] || touch[k] || pad[k]);
+    for (const k of ['fwd', 'back', 'left', 'right', 'rollL', 'rollR', 'fire', 'wheelie']) r[k] = !!(keys[k] || touch[k] || pad[k]);
     return r;
   }
 
@@ -156,7 +160,7 @@
     app = 'paused';
     for (const k in keys) keys[k] = false;
     $('pauseScore').textContent = game.score.toLocaleString();
-    $('pauseWave').textContent = game.wave;
+    $('pauseWave').textContent = game.stageNum;
     showModal('pauseModal');
   }
 
@@ -179,7 +183,7 @@
     const isHi = ev.score > hiScore && ev.score > 0;
     if (isHi) { hiScore = ev.score; store.set('hi', hiScore); }
     $('overScore').textContent = ev.score.toLocaleString();
-    $('overWave').textContent = ev.wave;
+    $('overWave').textContent = ev.stage;
     $('overHi').textContent = hiScore.toLocaleString();
     $('overBadge').hidden = !isHi;
     setTimeout(() => {

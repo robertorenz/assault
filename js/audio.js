@@ -75,8 +75,8 @@
       src.stop(t + dur + 0.05);
     }
 
-    arp(notes, step, type, vol) {
-      notes.forEach((f, i) => this.tone({ f, dur: step * 1.6, type, vol, delay: i * step }));
+    arp(notes, step, type, vol, delay) {
+      notes.forEach((f, i) => this.tone({ f, dur: step * 1.6, type, vol, delay: (delay || 0) + i * step }));
     }
 
     play(ev) {
@@ -89,6 +89,51 @@
             this.tone({ f: 1900, f2: 380, dur: 0.12, type: 'sawtooth', vol: 0.06 });
             this.noise({ dur: 0.07, vol: 0.12, freq: 3500, filter: 'highpass' });
           }
+          break;
+        case 'wheelie':
+          this.tone({ f: 90, f2: 220, dur: 0.25, type: classic ? 'square' : 'sawtooth', vol: 0.08 });
+          break;
+        case 'grenade':
+          this.tone({ f: 300, f2: 900, dur: 0.18, type: 'triangle', vol: 0.08 });
+          this.noise({ dur: 0.12, vol: 0.12, freq: 1800 });
+          break;
+        case 'blast':
+          this.noise({ dur: 0.6, vol: ev.owner === 'enemy' ? 0.35 : 0.45, freq: 2200, freq2: 120 });
+          this.tone({ f: 160, f2: 35, dur: 0.45, type: classic ? 'square' : 'sine', vol: 0.2 });
+          break;
+        case 'mortarFire':
+          this.tone({ f: 200, f2: 80, dur: 0.2, type: 'triangle', vol: 0.08 });
+          this.tone({ f: 1400, f2: 500, dur: 1.4, type: 'sine', vol: 0.03, delay: 0.1 });
+          break;
+        case 'roll':
+          this.noise({ dur: 0.2, vol: 0.12, freq: 600, freq2: 1600, filter: 'bandpass' });
+          break;
+        case 'lift':
+          this.tone({ f: 120, f2: 900, dur: 0.9, type: classic ? 'square' : 'sawtooth', vol: 0.07 });
+          break;
+        case 'liftEnd':
+          this.tone({ f: 800, f2: 140, dur: 0.8, type: classic ? 'square' : 'sawtooth', vol: 0.06 });
+          break;
+        case 'jump':
+          this.tone({ f: 220, f2: 1200, dur: 0.4, type: 'square', vol: 0.08 });
+          break;
+        case 'chopperIn':
+          for (let i = 0; i < 6; i++) this.noise({ dur: 0.06, vol: 0.1, freq: 400, delay: i * 0.09 });
+          break;
+        case 'tile':
+          break;
+        case 'coreOpen':
+          this.arp([196, 247, 294, 392], 0.1, classic ? 'square' : 'sawtooth', 0.08);
+          break;
+        case 'stageStart':
+          this.arp([262, 330, 392, 523, 659], 0.09, classic ? 'square' : 'triangle', 0.08);
+          break;
+        case 'stageClear':
+          this.noise({ dur: 1.6, vol: 0.5, freq: 2000, freq2: 80 });
+          this.arp([392, 523, 659, 784, 1047, 1319], 0.1, classic ? 'square' : 'triangle', 0.1, 0.6);
+          break;
+        case 'timeWarn':
+          for (let i = 0; i < 3; i++) this.tone({ f: 988, dur: 0.1, vol: 0.09, delay: i * 0.18 });
           break;
         case 'enemyShoot':
           this.tone({ f: ev.kind === 'missile' ? 520 : 380, f2: 160, dur: 0.14, type: classic ? 'square' : 'triangle', vol: 0.05 });

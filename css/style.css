@@ -105,8 +105,20 @@ body.playing .toolbar { display: flex; }
   font-size: 22px;
   touch-action: none;
 }
-.tbtn.fire { color: var(--teal-3); border-color: rgba(45, 212, 191, .4); }
-.tbtn.big { width: 78px; height: 78px; font-size: 26px; margin-bottom: 18px; }
+.tbtn.fire { color: var(--teal-3); border-color: rgba(45, 212, 191, .4); font-size: 13px; font-weight: 700; letter-spacing: .08em; }
+.tbtn.big { width: 78px; height: 78px; font-size: 15px; margin-bottom: 18px; }
+.tbtn.small { width: 48px; height: 48px; font-size: 18px; }
+.touch-pad {
+  display: grid;
+  grid-template-columns: 56px 56px 56px;
+  grid-template-rows: 56px 56px 56px;
+  pointer-events: auto;
+}
+.touch-pad .tbtn { width: 56px; height: 56px; border-radius: 14px; font-size: 18px; }
+.touch-pad .up { grid-column: 2; grid-row: 1; }
+.touch-pad .left { grid-column: 1; grid-row: 2; }
+.touch-pad .right { grid-column: 3; grid-row: 2; }
+.touch-pad .down { grid-column: 2; grid-row: 3; }
 .tbtn.down { background: rgba(45, 212, 191, .3); }
 
 /* ---------- modals ---------- */

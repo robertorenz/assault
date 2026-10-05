@@ -1,28 +1,22 @@
 /* Assault Revamped — 2.5D renderer.
- * Lays the 2D simulation onto a perspective ground plane viewed by a pitched
- * camera that sways with the player. Everything is canvas 2D: projected boxes
- * and wedges, shaded saucers, cast shadows, floor lighting and particles. */
+ * A chase camera sits behind the tank and turns with it. The ground is the
+ * stage's floor texture drawn mode-7 style (one perspective-scaled strip per
+ * scanline); walls, blocks, the fortress and every unit are extruded 3D
+ * geometry, depth-sorted and lit from the north-west, with cast shadows,
+ * floor lighting and particle effects on top. */
 (function (global) {
   'use strict';
 
-  const { W, GROUND_Y, MOTHER_Y, ROWS, HEAT_WARN } = global.Assault;
+  const { TS, T, TALL } = global.Assault;
 
-  const CAM_H = 330, CAM_BACK = 330, PITCH = 0.36, DEPTH = 1.6;
-  const NEAR_Y = GROUND_Y + 30;
-  const MOTHER_ALT = 190;
-  const COS = Math.cos(PITCH), SIN = Math.sin(PITCH);
+  const CAM_H = 150, CAM_BACK = 160, MAX_Z = 1500, OBJ_Z = 900, TAU = Math.PI * 2;
+  const LIGHT = [-0.6, -0.8];
 
-  // [body, highlight, shade] per enemy type — no purples.
-  const PAL = {
-    saucer:   ['#f59e0b', '#fde68a', '#78350f'],
-    splitter: ['#14b8a6', '#99f6e4', '#134e4a'],
-    mini:     ['#2dd4bf', '#ccfbf1', '#115e59'],
-    gunner:   ['#ef4444', '#fecaca', '#7f1d1d'],
-    diver:    ['#22c55e', '#bbf7d0', '#14532d']
-  };
-  const SPARK = {
-    saucer: ['#fde68a', '#fbbf24', '#ffffff'], splitter: ['#99f6e4', '#5eead4', '#ffffff'],
-    mini: ['#ccfbf1', '#5eead4'], gunner: ['#fecaca', '#f87171', '#fbbf24'], diver: ['#bbf7d0', '#4ade80', '#ffffff']
+  const SKY = {
+    desert: { top: '#06101e', mid: '#1c2a3e', hz: '#c98a52', fog: [201, 138, 82] },
+    base:   { top: '#030712', mid: '#0c1a2c', hz: '#2a6a74', fog: [42, 106, 116] },
+    forest: { top: '#04101a', mid: '#123040', hz: '#5a8a74', fog: [90, 138, 116] },
+    river:  { top: '#061428', mid: '#1a3a5a', hz: '#7aa8c0', fog: [122, 168, 192] }
   };
 
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -30,266 +24,163 @@
   const rnd = (a, b) => a + Math.random() * (b - a);
   const pick = arr => arr[(Math.random() * arr.length) | 0];
 
-  function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
-  function mix(a, b, t) {
-    const A = hexRgb(a), B = hexRgb(b);
-    return 'rgb(' + Math.round(lerp(A[0], B[0], t)) + ',' + Math.round(lerp(A[1], B[1], t)) + ',' + Math.round(lerp(A[2], B[2], t)) + ')';
+  const rgbCache = {};
+  function rgb(hex) {
+    let v = rgbCache[hex];
+    if (!v) { const n = parseInt(hex.slice(1), 16); v = rgbCache[hex] = [n >> 16, (n >> 8) & 255, n & 255]; }
+    return v;
   }
-
-  function altFly(y) {
-    if (y <= 430) return 60;
-    return 60 - clamp((y - 430) / (GROUND_Y - 430), 0, 1) * 44;
+  function shade(hex, k) {
+    const c = rgb(hex);
+    if (k <= 1) return 'rgb(' + (c[0] * k | 0) + ',' + (c[1] * k | 0) + ',' + (c[2] * k | 0) + ')';
+    const w = k - 1;
+    return 'rgb(' + (c[0] + (255 - c[0]) * w | 0) + ',' + (c[1] + (255 - c[1]) * w | 0) + ',' + (c[2] + (255 - c[2]) * w | 0) + ')';
   }
-
-  function enemyAlt(e) {
-    if (e.state === 'crawl') return 0;
-    if (e.state === 'drop') {
-      const k = clamp((e.y - MOTHER_Y) / (ROWS[0] - MOTHER_Y), 0, 1);
-      return lerp(MOTHER_ALT - 24, altFly(e.y), k);
-    }
-    let a = altFly(e.y);
-    if (e.state === 'descend' && e.targetY >= GROUND_Y) {
-      const k = clamp((e.y - ROWS[4]) / (GROUND_Y - ROWS[4]), 0, 1);
-      a = lerp(altFly(ROWS[4]), 6, k);
-    }
-    return a + Math.sin(e.t * 3 + e.id) * 3;
-  }
+  const faceLight = (nx, ny) => 0.62 + 0.38 * Math.max(0, nx * LIGHT[0] + ny * LIGHT[1]);
 
   class ModernRenderer {
     constructor(canvas) {
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d');
-      this.w = 1; this.h = 1; this.f = 1; this.cx = 0; this.cy = 0; this.camX = 0; this.ui = 1;
+      this.w = 1; this.h = 1; this.ui = 1; this.dpr = 1;
       this.t = 0;
       this.hideHud = false;
+      this.gcan = document.createElement('canvas');
+      this.gctx = this.gcan.getContext('2d');
+      this.mapTex = null;
+      this.stageRef = null;
+      this.pano = null;
       this.reset();
     }
 
     reset() {
-      this.parts = []; this.smoke = []; this.rings = []; this.lights = []; this.popups = []; this.decals = [];
+      this.parts = []; this.smoke = []; this.lights = []; this.rings = []; this.popups = []; this.decals = [];
       this.shake = 0; this.flash = 0; this.flashRgb = '239,68,68';
     }
 
     resize(w, h) {
       this.w = w; this.h = h;
+      this.dpr = Math.min(window.devicePixelRatio || 1, 2);
       this.ui = clamp(Math.min(w / 1400, h / 860), 0.5, 3);
-      this.fit();
-      this.buildBackdrop();
+      this.pano = null;
+    }
+
+    ensureMap(g) {
+      if (this.stageRef !== g.stage) {
+        this.stageRef = g.stage;
+        this.mapTex = new global.MapTexture(g.stage, 'floor');
+        this.pal = global.MAP_PALETTES[g.stage.theme.key];
+        this.sky = SKY[g.stage.theme.key];
+        this.pano = null;
+        this.decals = [];
+      }
     }
 
     /* ---------------- camera ---------------- */
 
-    proj(x, y, alt) {
-      const dx = x - W / 2 - this.camX, dy = alt - CAM_H, dz = (NEAR_Y - y) * DEPTH + CAM_BACK;
-      let zc = dz * COS - dy * SIN;
-      const yc = dy * COS + dz * SIN;
-      if (zc < 5) zc = 5;
-      const s = this.f / zc;
-      return { x: this.cx + dx * s, y: this.cy - yc * s, s, z: zc };
-    }
-
-    fit() {
-      const cam = this.camX;
-      this.camX = 0; this.f = 1; this.cx = 0; this.cy = 0;
-      // Keep a band of sky above the horizon in frame
-      const top = Math.min(this.proj(W / 2, MOTHER_Y, MOTHER_ALT + 50).y, -SIN / COS - 0.07);
-      const bot = this.proj(W / 2, GROUND_Y + 26, 0).y;
-      const l = this.proj(-10, GROUND_Y + 26, 0).x, r = this.proj(W + 10, GROUND_Y + 26, 0).x;
-      this.f = Math.min(this.w * 0.96 / (r - l), this.h * 0.84 / (bot - top));
+    setupCamera(g) {
+      const p = g.player;
+      this.px = p.x; this.py = p.y;
+      const a = g.camA;
+      this.ca = Math.cos(a); this.sa = Math.sin(a);
+      this.camA = a;
+      this.hz = this.h * 0.3;
+      this.camH = CAM_H + (p.lift || 0) * 300 + (p.jump ? p.alt * 70 : 0);
+      this.f = (this.h * 0.8 - this.hz) * CAM_BACK / this.camH;
       this.cx = this.w / 2;
-      this.cy = this.h * 0.46 - this.f * (top + bot) / 2;
-      this.horizon = this.cy - this.f * SIN / COS;
-      this.camX = cam;
+      this.maxZ = MAX_Z;
+      this.objZ = OBJ_Z;
+      this.camWX = this.px - this.sa * CAM_BACK;
+      this.camWY = this.py + this.ca * CAM_BACK;
     }
 
-    floorSquash(x, y) {
-      const a = this.proj(x, y - 10, 0), b = this.proj(x, y + 10, 0), c = this.proj(x, y, 0);
-      return Math.abs(b.y - a.y) / (20 * c.s);
+    proj(wx, wy, alt) {
+      const dx = wx - this.px, dy = wy - this.py;
+      const X = dx * this.ca + dy * this.sa;
+      const z = dx * this.sa - dy * this.ca + CAM_BACK;
+      const s = this.f / (z < 8 ? 8 : z);
+      return { x: this.cx + X * s, y: this.hz + (this.camH - alt) * s, s, z };
     }
 
-    /* ---------------- backdrop ---------------- */
-
-    buildBackdrop() {
-      const w = this.w, pad = Math.round(w * 0.12);
-      const hz = Math.max(4, Math.round(this.horizon) + 2);
-      const c = document.createElement('canvas');
-      c.width = w + pad * 2;
-      c.height = hz;
-      const x = c.getContext('2d');
-
-      const sky = x.createLinearGradient(0, 0, 0, hz);
-      sky.addColorStop(0, '#02060f');
-      sky.addColorStop(0.55, '#071426');
-      sky.addColorStop(1, '#0f2a40');
-      x.fillStyle = sky;
-      x.fillRect(0, 0, c.width, hz);
-
-      const n = Math.round(c.width * hz / 3500);
-      for (let i = 0; i < n; i++) {
-        const sx = Math.random() * c.width, sy = Math.random() * hz * 0.92;
-        const r = Math.random() < 0.08 ? rnd(1.2, 1.9) : rnd(0.4, 1.1);
-        x.fillStyle = 'rgba(' + pick(['226,232,240', '186,230,253', '254,243,199']) + ',' + rnd(0.25, 0.9).toFixed(2) + ')';
-        x.beginPath(); x.arc(sx, sy, r * this.ui * 1.4, 0, Math.PI * 2); x.fill();
-      }
-
-      // Ringed gas giant
-      const pr = Math.min(w, this.h) * 0.07, px = pad + w * 0.27, py = hz * 0.5;
-      const glow = x.createRadialGradient(px, py, pr, px, py, pr * 2.4);
-      glow.addColorStop(0, 'rgba(56,189,248,0.18)');
-      glow.addColorStop(1, 'rgba(56,189,248,0)');
-      x.fillStyle = glow;
-      x.fillRect(px - pr * 3, py - pr * 3, pr * 6, pr * 6);
-      x.save();
-      x.translate(px, py); x.rotate(-0.35);
-      x.strokeStyle = 'rgba(186,230,253,0.18)'; x.lineWidth = pr * 0.12;
-      x.beginPath(); x.ellipse(0, 0, pr * 1.9, pr * 0.42, 0, Math.PI, Math.PI * 2); x.stroke();
-      x.restore();
-      const pg = x.createRadialGradient(px - pr * 0.4, py - pr * 0.4, pr * 0.1, px, py, pr);
-      pg.addColorStop(0, '#bae6fd'); pg.addColorStop(0.45, '#0e7490'); pg.addColorStop(1, '#082f49');
-      x.fillStyle = pg;
-      x.beginPath(); x.arc(px, py, pr, 0, Math.PI * 2); x.fill();
-      x.save();
-      x.beginPath(); x.arc(px, py, pr, 0, Math.PI * 2); x.clip();
-      x.strokeStyle = 'rgba(8,47,73,0.35)'; x.lineWidth = pr * 0.08;
-      for (let k = -2; k <= 2; k++) { x.beginPath(); x.ellipse(px, py + k * pr * 0.3, pr * 1.1, pr * 0.08, -0.35, 0, Math.PI * 2); x.stroke(); }
-      x.restore();
-      x.save();
-      x.translate(px, py); x.rotate(-0.35);
-      x.strokeStyle = 'rgba(186,230,253,0.4)'; x.lineWidth = pr * 0.1;
-      x.beginPath(); x.ellipse(0, 0, pr * 1.9, pr * 0.42, 0, 0, Math.PI); x.stroke();
-      x.restore();
-
-      // Horizon glow
-      const hg = x.createLinearGradient(0, hz * 0.6, 0, hz);
-      hg.addColorStop(0, 'rgba(20,184,166,0)');
-      hg.addColorStop(1, 'rgba(20,184,166,0.28)');
-      x.fillStyle = hg;
-      x.fillRect(0, hz * 0.6, c.width, hz * 0.4);
-
-      // Two mountain ridges
-      const ridge = (amp, seed, fill, edge) => {
-        x.beginPath();
-        x.moveTo(0, hz);
-        for (let i = 0; i <= c.width; i += 6) {
-          const u = i / c.width;
-          const hgt = amp * (0.55 + 0.25 * Math.sin(u * 13 + seed) + 0.15 * Math.sin(u * 37 + seed * 2) + 0.08 * Math.sin(u * 91 + seed * 3));
-          x.lineTo(i, hz - hgt);
-        }
-        x.lineTo(c.width, hz);
-        x.closePath();
-        x.fillStyle = fill;
-        x.fill();
-        x.strokeStyle = edge;
-        x.lineWidth = Math.max(1, this.ui);
-        x.stroke();
-      };
-      ridge(this.h * 0.07, 1.3, '#0a1a2b', 'rgba(45,212,191,0.12)');
-      ridge(this.h * 0.04, 4.1, '#081422', 'rgba(45,212,191,0.22)');
-
-      this.backdrop = c;
-      this.backPad = pad;
-    }
+    depth(wx, wy) { return (wx - this.px) * this.sa - (wy - this.py) * this.ca + CAM_BACK; }
 
     /* ---------------- events ---------------- */
 
     onEvent(ev, g) {
+      this.ensureMap(g);
       switch (ev.type) {
+        case 'tile': this.mapTex.redraw(ev.tx, ev.ty); break;
         case 'explode': {
-          const alt = ev.crawl ? 6 : ev.state === 'drop' ? MOTHER_ALT - 40 : altFly(ev.y);
-          this.explosion(ev.x, ev.y, alt, ev.enemy, ev.crawl ? 1.2 : 1);
-          if (ev.points) this.popups.push({ x: ev.x, y: ev.y, alt: alt + 20, text: '+' + ev.points, life: 1.1, max: 1.1 });
+          const sz = ev.size || 1;
+          const alt = ev.flying ? 70 : ev.enemy === 'fortgun' || ev.enemy === 'core' ? 46 : 10;
+          const cols = ev.enemy === 'tree' ? ['#4a8a3a', '#86c06a', '#6a4a2a'] : ev.enemy === 'block' ? ['#d8b07a', '#8a6a4a', '#fde68a'] : ['#fde68a', '#fb923c', '#ffffff', '#f87171'];
+          this.explosion(ev.x, ev.y, alt, sz, cols);
+          if (ev.points) this.popups.push({ x: ev.x, y: ev.y, alt: alt + 26, text: '+' + ev.points, life: 1.1, max: 1.1 });
           break;
         }
-        case 'split':
-          this.sparks(ev.x, ev.y, altFly(ev.y), SPARK.splitter, 26, 180);
-          this.lights.push({ x: ev.x, y: ev.y, r: 70, rgb: '45,212,191', life: 0.35, max: 0.35 });
-          this.popups.push({ x: ev.x, y: ev.y, alt: altFly(ev.y) + 20, text: 'SPLIT +' + ev.points, life: 1, max: 1 });
-          this.shake = Math.max(this.shake, 4);
+        case 'blast':
+          this.explosion(ev.x, ev.y, 4, ev.r / 34, ev.owner === 'enemy' ? ['#fca5a5', '#fb923c', '#ffffff'] : ['#d9f99d', '#fde68a', '#fb923c', '#ffffff']);
+          this.rings.push({ x: ev.x, y: ev.y, r: 4, max: ev.r * 1.4, life: 0.5, maxLife: 0.5, rgb: '253,230,138' });
           break;
-        case 'hit':
-          this.sparks(ev.x, ev.y, altFly(ev.y), ['#ffffff', '#fecaca'], 12, 140);
-          break;
-        case 'spark':
-          this.sparks(ev.x, ev.y, MOTHER_ALT - 12, ['#e0f2fe', '#67e8f9', '#ffffff'], 10, 120);
-          break;
+        case 'hit': this.sparks(ev.x, ev.y, 14, ['#ffffff', '#fde68a'], 10, 140); break;
+        case 'spark': this.sparks(ev.x, ev.y, ev.enemy ? 12 : 14, ev.enemy ? ['#fb923c', '#fde68a'] : ['#e0f2fe', '#67e8f9', '#ffffff'], 6, 110); break;
         case 'intercept':
-          this.sparks(ev.x, ev.y, altFly(ev.y), ['#fde68a', '#fb923c', '#ffffff'], 14, 150);
-          this.lights.push({ x: ev.x, y: ev.y, r: 40, rgb: '251,146,60', life: 0.25, max: 0.25 });
+          this.sparks(ev.x, ev.y, 12, ['#fde68a', '#fb923c', '#ffffff'], 12, 150);
+          this.lights.push({ x: ev.x, y: ev.y, r: 40, rgb: '251,146,60', life: 0.2, max: 0.2 });
           break;
-        case 'bulletGround':
-          this.sparks(ev.x, ev.y, 2, ['#fca5a5', '#fb923c'], 8, 90);
-          this.rings.push({ x: ev.x, y: ev.y, r: 2, max: 22, life: 0.35, maxLife: 0.35, rgb: '248,113,113' });
-          this.decals.push({ x: ev.x, y: ev.y, r: rnd(7, 11), life: 5, max: 5 });
+        case 'shoot':
+          this.lights.push({ x: ev.x, y: ev.y, r: 50, rgb: '253,230,138', life: 0.1, max: 0.1 });
+          this.sparks(ev.x, ev.y, 16, ['#fffbeb', '#fde68a'], 4, 80);
+          break;
+        case 'enemyShoot':
+          this.lights.push({ x: ev.x, y: ev.y, r: 36, rgb: ev.kind === 'plasma' ? '244,63,94' : '251,146,60', life: 0.1, max: 0.1 });
           break;
         case 'land':
-          this.rings.push({ x: ev.x, y: ev.y, r: 4, max: 46, life: 0.5, maxLife: 0.5, rgb: '148,163,184' });
-          for (let i = 0; i < 8; i++) this.smoke.push(this.puff(ev.x + rnd(-14, 14), ev.y + rnd(-8, 8), 2, 0.9, '100,116,139'));
-          this.shake = Math.max(this.shake, 3);
+          this.rings.push({ x: ev.x, y: ev.y, r: 6, max: 90, life: 0.55, maxLife: 0.55, rgb: '148,163,184' });
+          for (let i = 0; i < 12; i++) this.smoke.push(this.puff(ev.x + rnd(-18, 18), ev.y + rnd(-18, 18), 2, 1, '120,110,100'));
+          this.shake = Math.max(this.shake, 10);
           break;
-        case 'shoot': {
-          const p = g.player;
-          const mx = ev.dir === 'up' ? p.x : p.x + (ev.dir === 'left' ? -24 : 24);
-          const my = ev.dir === 'up' ? p.y - 24 : p.y;
-          this.lights.push({ x: mx, y: my, r: 46, rgb: '103,232,249', life: 0.12, max: 0.12 });
-          this.sparks(mx, my, 20, ['#cffafe', '#67e8f9'], 4, 70);
-          break;
-        }
         case 'playerDie':
-          this.explosion(ev.x, ev.y, 12, 'player', 2.2);
-          this.flash = 0.55;
-          this.flashRgb = ev.reason === 'overheat' ? '249,115,22' : '239,68,68';
-          this.shake = 16;
+          this.explosion(ev.x, ev.y, 10, 2.4, ['#ffffff', '#e2e8f0', '#fde68a', '#fb923c', '#60a5fa']);
+          this.flash = 0.5;
+          this.flashRgb = '239,68,68';
+          this.shake = 18;
           break;
-        case 'waveClear':
-          this.flash = 0.35;
-          this.flashRgb = '45,212,191';
-          break;
-        case 'extraLife':
-          this.popups.push({ x: ev.x, y: ev.y, alt: 50, text: 'EXTRA LIFE', life: 1.8, max: 1.8, color: '#5eead4' });
-          break;
+        case 'coreOpen': this.flash = 0.35; this.flashRgb = '251,191,36'; break;
+        case 'stageClear': this.flash = 0.5; this.flashRgb = '255,255,255'; this.shake = 20; break;
+        case 'extraLife': this.popups.push({ x: ev.x, y: ev.y, alt: 50, text: '1UP', life: 1.8, max: 1.8, color: '#5eead4' }); break;
       }
     }
 
-    puff(x, y, alt, life, rgb) {
-      return { x, y, alt, r: rnd(5, 9), grow: rnd(14, 26), va: rnd(10, 30), vx: rnd(-12, 12), life, max: life, rgb };
+    puff(x, y, alt, life, rgbs) {
+      return { x, y, alt, r: rnd(6, 10), grow: rnd(14, 26), va: rnd(10, 30), vx: rnd(-10, 10), life, max: life, rgb: rgbs };
     }
 
     sparks(x, y, alt, colors, n, speed) {
       for (let i = 0; i < n; i++) {
-        const a = Math.random() * Math.PI * 2, sp = rnd(0.3, 1) * speed;
-        this.parts.push({
-          x, y, alt, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, va: rnd(-0.3, 1) * speed,
-          life: rnd(0.25, 0.7), max: 0.7, color: pick(colors), size: rnd(1, 2.2), glow: true
-        });
+        const a = Math.random() * TAU, sp = rnd(0.3, 1) * speed;
+        this.parts.push({ x, y, alt, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, va: rnd(-0.2, 1) * speed, life: rnd(0.25, 0.7), max: 0.7, color: pick(colors), size: rnd(1, 2), glow: true });
       }
     }
 
-    explosion(x, y, alt, type, power) {
-      const pal = PAL[type] || ['#94a3b8', '#e2e8f0', '#334155'];
-      const sp = SPARK[type] || ['#fde68a', '#fb923c', '#ffffff', '#67e8f9'];
-      this.sparks(x, y, alt, sp, Math.round(34 * power), 200 * Math.sqrt(power));
-      for (let i = 0; i < 12 * power; i++) {
-        const a = Math.random() * Math.PI * 2, s = rnd(40, 150) * Math.sqrt(power);
-        this.parts.push({
-          x, y, alt, vx: Math.cos(a) * s, vy: Math.sin(a) * s, va: rnd(60, 220),
-          life: rnd(0.8, 1.6), max: 1.6, color: pick([pal[0], pal[2], '#475569']), size: rnd(2, 4.5),
-          glow: false, rot: Math.random() * 6, vr: rnd(-12, 12)
-        });
+    explosion(x, y, alt, power, colors) {
+      this.sparks(x, y, alt, colors, Math.round(26 * power), 190 * Math.sqrt(power));
+      for (let i = 0; i < 9 * power; i++) {
+        const a = Math.random() * TAU, s = rnd(40, 140) * Math.sqrt(power);
+        this.parts.push({ x, y, alt, vx: Math.cos(a) * s, vy: Math.sin(a) * s, va: rnd(60, 220), life: rnd(0.8, 1.5), max: 1.5, color: pick(['#334155', '#475569', '#57534e', '#78350f']), size: rnd(2, 4), glow: false, rot: Math.random() * 6, vr: rnd(-12, 12) });
       }
-      for (let i = 0; i < 6 * power; i++) this.smoke.push(this.puff(x + rnd(-8, 8), y + rnd(-6, 6), alt, rnd(0.9, 1.6), '51,65,85'));
-      this.lights.push({ x, y, r: 110 * power, rgb: '251,191,36', life: 0.45, max: 0.45, alt });
-      if (alt < 40) {
-        this.rings.push({ x, y, r: 4, max: 70 * power, life: 0.55, maxLife: 0.55, rgb: '251,191,36' });
-        this.decals.push({ x, y, r: 16 * power, life: 7, max: 7 });
+      for (let i = 0; i < 5 * power; i++) this.smoke.push(this.puff(x + rnd(-8, 8), y + rnd(-8, 8), alt, rnd(0.9, 1.7), '40,44,52'));
+      this.lights.push({ x, y, r: 100 * power, rgb: '251,191,36', life: 0.45, max: 0.45, alt: alt + 4 });
+      if (alt < 30) {
+        this.rings.push({ x, y, r: 4, max: 60 * power, life: 0.5, maxLife: 0.5, rgb: '251,191,36' });
+        this.decals.push({ x, y, r: 14 * power, life: 8, max: 8 });
+        if (this.decals.length > 50) this.decals.shift();
       }
-      this.shake = Math.max(this.shake, 6 * power);
+      this.shake = Math.max(this.shake, 5 * power);
     }
 
-    update(dt, g) {
+    update(dt) {
       this.t += dt;
-      const target = g.player.alive ? (g.player.x - W / 2) * 0.22 : this.camX;
-      this.camX += (target - this.camX) * Math.min(1, dt * 3);
-
       for (const p of this.parts) {
         p.x += p.vx * dt; p.y += p.vy * dt; p.alt += p.va * dt;
         p.va -= 420 * dt;
@@ -308,12 +199,128 @@
       this.popups = this.popups.filter(p => p.life > 0);
       for (const d of this.decals) d.life -= dt;
       this.decals = this.decals.filter(d => d.life > 0);
-      if (this.decals.length > 40) this.decals.splice(0, this.decals.length - 40);
       this.shake = Math.max(0, this.shake - dt * 30);
       if (this.flash > 0) this.flash -= dt;
     }
 
-    /* ---------------- primitives ---------------- */
+    /* ---------------- sky & ground ---------------- */
+
+    buildPano() {
+      const w = this.w, hz = Math.round(this.hz) + 2, sk = this.sky;
+      const fov = 2 * Math.atan((w / 2) / this.f);
+      const pw = Math.round(w * TAU / fov);
+      const c = document.createElement('canvas');
+      c.width = pw; c.height = hz;
+      const x = c.getContext('2d');
+      const g = x.createLinearGradient(0, 0, 0, hz);
+      g.addColorStop(0, sk.top); g.addColorStop(0.55, sk.mid); g.addColorStop(1, sk.hz);
+      x.fillStyle = g;
+      x.fillRect(0, 0, pw, hz);
+      let seed = 7;
+      const r = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+      for (let i = 0; i < pw * hz / 4000; i++) {
+        x.fillStyle = 'rgba(226,232,240,' + (0.2 + r() * 0.7).toFixed(2) + ')';
+        const sy = r() * hz * 0.6;
+        x.fillRect(r() * pw, sy, 1 + (r() < 0.1 ? 1 : 0), 1 + (r() < 0.1 ? 1 : 0));
+      }
+      // distant planet
+      const pr = hz * 0.16, px = pw * 0.2, py = hz * 0.32;
+      const pg = x.createRadialGradient(px - pr * 0.4, py - pr * 0.4, pr * 0.1, px, py, pr);
+      pg.addColorStop(0, '#e0f2fe'); pg.addColorStop(0.5, '#38bdf8'); pg.addColorStop(1, '#0c4a6e');
+      x.fillStyle = pg;
+      x.beginPath(); x.arc(px, py, pr, 0, TAU); x.fill();
+      x.strokeStyle = 'rgba(186,230,253,0.45)'; x.lineWidth = pr * 0.08;
+      x.beginPath(); x.ellipse(px, py, pr * 1.8, pr * 0.38, -0.3, 0, TAU); x.stroke();
+      // mountain ridges, seamless around the panorama
+      const ridge = (amp, k, fill) => {
+        x.beginPath(); x.moveTo(0, hz);
+        for (let i = 0; i <= pw; i += 4) {
+          const u = i / pw * TAU;
+          const hgt = amp * (0.55 + 0.25 * Math.sin(u * 3 + k) + 0.15 * Math.sin(u * 11 + k * 2) + 0.07 * Math.sin(u * 29 + k * 3));
+          x.lineTo(i, hz - hgt);
+        }
+        x.lineTo(pw, hz); x.closePath();
+        x.fillStyle = fill; x.fill();
+      };
+      const f = sk.fog;
+      ridge(hz * 0.32, 1.1, 'rgba(' + (f[0] * 0.35 | 0) + ',' + (f[1] * 0.35 | 0) + ',' + (f[2] * 0.4 | 0) + ',1)');
+      ridge(hz * 0.18, 4.2, 'rgba(' + (f[0] * 0.55 | 0) + ',' + (f[1] * 0.55 | 0) + ',' + (f[2] * 0.6 | 0) + ',1)');
+      const hg = x.createLinearGradient(0, hz * 0.75, 0, hz);
+      hg.addColorStop(0, 'rgba(' + f.join(',') + ',0)');
+      hg.addColorStop(1, 'rgba(' + f.join(',') + ',0.85)');
+      x.fillStyle = hg;
+      x.fillRect(0, hz * 0.75, pw, hz * 0.25);
+      this.pano = c;
+    }
+
+    drawSky() {
+      if (!this.pano || this.pano.height !== Math.round(this.hz) + 2) this.buildPano();
+      const c = this.ctx, pw = this.pano.width;
+      let off = -((this.camA / TAU) * pw) % pw;
+      if (off > 0) off -= pw;
+      for (let x = Math.floor(off); x < this.w; x += pw - 1) c.drawImage(this.pano, x, 0);
+    }
+
+    drawGround() {
+      const c = this.ctx, w = this.w, h = this.h, hz = this.hz, f = this.f, camH = this.camH;
+      const maxZ = this.maxZ;
+      const zNear = camH * f / (h - hz);
+      const halfW = Math.ceil((w / 2) * maxZ / f) + 4;
+      // The ground buffer is world-aligned to the camera; scale it down when the view is wide or high
+      const k = Math.min(1, 3072 / (halfW * 2), 1536 / (maxZ - zNear + 8));
+      const GW = Math.ceil(halfW * 2 * k), GH = Math.ceil((maxZ - zNear + 8) * k);
+      if (this.gcan.width !== GW || this.gcan.height !== GH) {
+        this.gcan.width = GW;
+        this.gcan.height = GH;
+      }
+      const gx = this.gctx, gw = GW, gh = GH;
+      const rowTank = gh - (CAM_BACK - zNear) * k - 4;
+      const fog = this.sky.fog;
+      gx.setTransform(1, 0, 0, 1, 0, 0);
+      gx.fillStyle = this.pal.g[3];
+      gx.fillRect(0, 0, gw, gh);
+      gx.imageSmoothingEnabled = true;
+      gx.translate(gw / 2, rowTank);
+      gx.scale(k, k);
+      gx.rotate(-this.camA);
+      gx.translate(-this.px, -this.py);
+      const R = Math.hypot(halfW, gh / k) + 40;
+      const mc = this.mapTex.canvas;
+      const sx = clamp(Math.floor(this.px - R), 0, mc.width), sy = clamp(Math.floor(this.py - R), 0, mc.height);
+      const ex = clamp(Math.ceil(this.px + R), 0, mc.width), ey = clamp(Math.ceil(this.py + R), 0, mc.height);
+      if (ex > sx && ey > sy) gx.drawImage(mc, sx, sy, ex - sx, ey - sy, sx, sy, ex - sx, ey - sy);
+      // Scorch decals baked into the per-frame ground buffer
+      for (const d of this.decals) {
+        const a = 0.5 * clamp(d.life / d.max * 2, 0, 1);
+        const gr = gx.createRadialGradient(d.x, d.y, 0, d.x, d.y, d.r);
+        gr.addColorStop(0, 'rgba(10,8,6,' + a + ')');
+        gr.addColorStop(1, 'rgba(10,8,6,0)');
+        gx.fillStyle = gr;
+        gx.beginPath(); gx.arc(d.x, d.y, d.r, 0, TAU); gx.fill();
+      }
+
+      const step = Math.max(1, Math.round(this.dpr));
+      const y0 = Math.floor(hz + camH * f / maxZ);
+      c.imageSmoothingEnabled = true;
+      for (let y = y0; y < h; y += step) {
+        const z = camH * f / (y + step * 0.5 - hz);
+        const row = rowTank - (z - CAM_BACK) * k;
+        if (row < 0 || row >= gh) continue;
+        const half = (w / 2) * z / f * k;
+        c.drawImage(this.gcan, gw / 2 - half, row, half * 2, 1, 0, y, w, step);
+      }
+      // Distance fog: opaque at the horizon, clear by ~550 units out
+      const yClear = hz + camH * f / 550;
+      const fg = c.createLinearGradient(0, hz, 0, yClear);
+      const kf = clamp((y0 - hz) / (yClear - hz), 0, 0.95);
+      fg.addColorStop(0, 'rgba(' + fog.join(',') + ',1)');
+      fg.addColorStop(kf, 'rgba(' + fog.join(',') + ',1)');
+      fg.addColorStop(1, 'rgba(' + fog.join(',') + ',0)');
+      c.fillStyle = fg;
+      c.fillRect(0, hz - 1, w, yClear - hz + 1);
+    }
+
+    /* ---------------- 3D primitives ---------------- */
 
     poly(pts, fill) {
       const c = this.ctx;
@@ -325,561 +332,374 @@
       c.fill();
     }
 
-    ellipse(x, y, rx, ry, fill) {
-      const c = this.ctx;
+    /* Oriented box: centre (x,y), heading a, half extents hw (right) / hd (forward),
+     * from alt a0 to a1. pitch lifts the front (rotating about the rear edge). */
+    obox(x, y, a, hw, hd, a0, a1, col, opt) {
+      opt = opt || {};
+      const ca = Math.cos(a), sa = Math.sin(a), pitch = opt.pitch || 0, topCol = opt.top || col;
+      const P = (u, v, alt) => this.proj(x + u * ca + v * sa, y + u * sa - v * ca, alt + (v + hd) * pitch);
+      const b = [P(-hw, hd, a0), P(hw, hd, a0), P(hw, -hd, a0), P(-hw, -hd, a0)];
+      const t = [P(-hw, hd, a1), P(hw, hd, a1), P(hw, -hd, a1), P(-hw, -hd, a1)];
+      const cwx = this.camWX - x, cwy = this.camWY - y;
+      const faces = [
+        { n: [sa, -ca], d: hd, i: [0, 1] },     // front
+        { n: [ca, sa], d: hw, i: [1, 2] },      // right
+        { n: [-sa, ca], d: hd, i: [2, 3] },     // back
+        { n: [-ca, -sa], d: hw, i: [3, 0] }     // left
+      ];
+      for (const fc of faces) {
+        if (fc.n[0] * cwx + fc.n[1] * cwy <= fc.d) continue;
+        const [i, j] = fc.i;
+        this.poly([b[i], b[j], t[j], t[i]], shade(col, faceLight(fc.n[0], fc.n[1]) * (opt.side || 0.82)));
+      }
+      this.poly(t, shade(topCol, opt.topK || 1.05));
+      return t;
+    }
+
+    beam(x0, y0, a0, x1, y1, a1, width, col) {
+      const p0 = this.proj(x0, y0, a0), p1 = this.proj(x1, y1, a1), c = this.ctx;
+      c.strokeStyle = col;
+      c.lineWidth = Math.max(1, width * (p0.s + p1.s) / 2);
+      c.lineCap = 'round';
+      c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+    }
+
+    groundEllipse(x, y, r, fill, stroke) {
+      const P = this.proj(x, y, 0), c = this.ctx;
+      if (P.z < 20 || P.z > this.objZ) return;
+      const sq = this.camH / P.z;
       c.beginPath();
-      c.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2);
-      c.fillStyle = fill;
-      c.fill();
+      c.ellipse(P.x, P.y, Math.max(0.5, r * P.s), Math.max(0.5, r * P.s * sq), 0, 0, TAU);
+      if (fill) { c.fillStyle = fill; c.fill(); }
+      if (stroke) { c.strokeStyle = stroke; c.stroke(); }
     }
 
-    box(x, y, hw, hd, a0, a1, top, front, side) {
-      const P = (xx, yy, aa) => this.proj(xx, yy, aa);
-      const x0 = x - hw, x1 = x + hw, yF = y - hd, yN = y + hd;
-      const tFL = P(x0, yN, a1), tFR = P(x1, yN, a1), tBL = P(x0, yF, a1), tBR = P(x1, yF, a1);
-      const bFL = P(x0, yN, a0), bFR = P(x1, yN, a0), bBL = P(x0, yF, a0), bBR = P(x1, yF, a0);
-      const camWX = W / 2 + this.camX;
-      if (x0 > camWX) this.poly([tFL, tBL, bBL, bFL], side);
-      if (x1 < camWX) this.poly([tFR, tBR, bBR, bFR], side);
-      this.poly([tFL, tFR, bFR, bFL], front);
-      this.poly([tFL, tFR, tBR, tBL], top);
-    }
+    shadow(x, y, r, alpha) { this.groundEllipse(x, y, r, 'rgba(0,0,0,' + alpha + ')'); }
 
-    floorLight(x, y, r, rgb, alpha) {
-      const c = this.ctx, P = this.proj(x, y, 0), sq = this.floorSquash(x, y), rad = r * P.s;
-      if (rad < 0.5) return;
+    floorLight(x, y, r, rgbs, alpha) {
+      const P = this.proj(x, y, 0);
+      if (P.z < 20 || P.z > this.objZ) return;
+      const c = this.ctx, rad = r * P.s, sq = this.camH / P.z;
+      if (rad < 1) return;
       c.save();
       c.translate(P.x, P.y);
       c.scale(1, sq);
       const g = c.createRadialGradient(0, 0, 0, 0, 0, rad);
-      g.addColorStop(0, 'rgba(' + rgb + ',' + alpha + ')');
-      g.addColorStop(1, 'rgba(' + rgb + ',0)');
+      g.addColorStop(0, 'rgba(' + rgbs + ',' + alpha + ')');
+      g.addColorStop(1, 'rgba(' + rgbs + ',0)');
       c.fillStyle = g;
-      c.beginPath(); c.arc(0, 0, rad, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(0, 0, rad, 0, TAU); c.fill();
       c.restore();
     }
 
-    shadow(x, y, r, alt) {
-      const P = this.proj(x, y, 0), sq = this.floorSquash(x, y);
-      const a = 0.5 * clamp(1 - alt / 220, 0.15, 1);
-      const rx = r * P.s * (1 + alt / 260);
-      const c = this.ctx;
-      c.save();
-      c.translate(P.x, P.y);
-      c.scale(1, sq);
-      const g = c.createRadialGradient(0, 0, 0, 0, 0, rx);
-      g.addColorStop(0, 'rgba(0,0,0,' + a + ')');
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      c.fillStyle = g;
-      c.beginPath(); c.arc(0, 0, rx, 0, Math.PI * 2); c.fill();
-      c.restore();
-    }
+    /* ---------------- scene ---------------- */
 
-    /* ---------------- scene: floor ---------------- */
-
-    drawFloor(g) {
-      const c = this.ctx, u = this.ui, hz = this.horizon;
-      const fg = c.createLinearGradient(0, hz, 0, this.h);
-      fg.addColorStop(0, '#0b1d2c');
-      fg.addColorStop(0.25, '#08141f');
-      fg.addColorStop(1, '#0b1824');
-      c.fillStyle = fg;
-      c.fillRect(0, hz, this.w, this.h - hz);
-
-      c.lineWidth = Math.max(1, u * 1.1);
-      const yFar = -1100, yNear = GROUND_Y + 170;
-      for (let x = -880; x <= W + 880; x += 40) {
-        const a = this.proj(x, yFar, 0), b = this.proj(x, yNear, 0);
-        const inField = x >= 0 && x <= W;
-        const gr = c.createLinearGradient(a.x, a.y, b.x, b.y);
-        gr.addColorStop(0, 'rgba(45,212,191,0)');
-        gr.addColorStop(1, inField ? 'rgba(45,212,191,0.22)' : 'rgba(45,212,191,0.08)');
-        c.strokeStyle = gr;
-        c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
-      }
-      for (let y = yNear; y >= yFar; y -= 40) {
-        const a = this.proj(-880, y, 0), b = this.proj(W + 880, y, 0);
-        const fade = clamp((y - yFar) / (yNear - yFar), 0, 1);
-        c.strokeStyle = 'rgba(45,212,191,' + (0.03 + fade * fade * 0.14).toFixed(3) + ')';
-        c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
-      }
-
-      // Patrol lanes
-      c.setLineDash([8 * u, 10 * u]);
-      for (const ry of ROWS) {
-        const a = this.proj(6, ry, 0), b = this.proj(W - 6, ry, 0);
-        c.strokeStyle = 'rgba(148,163,184,0.10)';
-        c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
-      }
-      c.setLineDash([]);
-
-      // Player track
-      const t0 = GROUND_Y - 18, t1 = GROUND_Y + 18;
-      const q = [this.proj(0, t0, 0), this.proj(W, t0, 0), this.proj(W, t1, 0), this.proj(0, t1, 0)];
-      const tg = c.createLinearGradient(0, q[0].y, 0, q[2].y);
-      tg.addColorStop(0, 'rgba(20,184,166,0.05)');
-      tg.addColorStop(1, 'rgba(20,184,166,0.16)');
-      this.poly(q, tg);
-      c.strokeStyle = 'rgba(94,234,212,0.45)';
-      c.lineWidth = Math.max(1, u * 1.5);
-      c.beginPath(); c.moveTo(q[0].x, q[0].y); c.lineTo(q[1].x, q[1].y); c.stroke();
-      c.beginPath(); c.moveTo(q[3].x, q[3].y); c.lineTo(q[2].x, q[2].y); c.stroke();
-
-      // Field rails with travelling pulses
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      for (const rx of [0, W]) {
-        const a = this.proj(rx, MOTHER_Y - 60, 0), b = this.proj(rx, GROUND_Y + 40, 0);
-        c.strokeStyle = 'rgba(45,212,191,0.55)';
-        c.lineWidth = Math.max(1.5, u * 2.2);
-        c.shadowColor = 'rgba(45,212,191,0.9)';
-        c.shadowBlur = 10 * u;
-        c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
-        c.shadowBlur = 0;
-        for (let k = 0; k < 3; k++) {
-          const ph = ((this.t * 0.35 + k / 3) % 1);
-          const py = lerp(MOTHER_Y - 60, GROUND_Y + 40, ph);
-          const P = this.proj(rx, py, 0);
-          const rr = Math.max(1.5, 5 * P.s);
-          const gg = c.createRadialGradient(P.x, P.y, 0, P.x, P.y, rr * 3);
-          gg.addColorStop(0, 'rgba(204,251,241,0.9)');
-          gg.addColorStop(1, 'rgba(45,212,191,0)');
-          c.fillStyle = gg;
-          c.beginPath(); c.arc(P.x, P.y, rr * 3, 0, Math.PI * 2); c.fill();
+    collectTiles(list) {
+      const s = this.stageRef, P = this.pal, key = s.theme.key;
+      const R = this.objZ;
+      const tx0 = Math.max(0, Math.floor((this.px - R) / TS)), tx1 = Math.min(s.MW - 1, Math.floor((this.px + R) / TS));
+      const ty0 = Math.max(0, Math.floor((this.py - R) / TS)), ty1 = Math.min(s.MH - 1, Math.floor((this.py + R) / TS));
+      const halfFov = (this.w / 2) / this.f;
+      const tall = (x, y) => (x < 0 || y < 0 || x >= s.MW || y >= s.MH) ? 99 : TALL[s.map[y * s.MW + x]];
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          const v = s.map[ty * s.MW + tx];
+          const h = TALL[v];
+          if (!h) continue;
+          const cx = (tx + 0.5) * TS, cy = (ty + 0.5) * TS;
+          const z = this.depth(cx, cy);
+          if (z < 40 || z > this.objZ) continue;
+          const X = (cx - this.px) * this.ca + (cy - this.py) * this.sa;
+          if (Math.abs(X) - 24 > halfFov * z) continue;
+          if (v === T.TREE) {
+            list.push({ z, fn: () => this.drawTree(cx, cy, tx, ty) });
+            continue;
+          }
+          const col = v === T.WALL ? P.wall : v === T.BLOCK ? P.block : P.fort;
+          const top = v === T.WALL ? P.wallTop : v === T.BLOCK ? P.blockHi : P.fortHi;
+          list.push({ z, fn: () => this.drawTileBox(tx, ty, h, col, top, v, key, tall) });
         }
       }
-      c.restore();
-
-      // Scorch decals
-      for (const d of this.decals) {
-        const P = this.proj(d.x, d.y, 0), sq = this.floorSquash(d.x, d.y);
-        c.save();
-        c.translate(P.x, P.y); c.scale(1, sq);
-        const a = 0.45 * clamp(d.life / d.max * 2, 0, 1);
-        const gd = c.createRadialGradient(0, 0, 0, 0, 0, d.r * P.s);
-        gd.addColorStop(0, 'rgba(2,6,12,' + a + ')');
-        gd.addColorStop(1, 'rgba(2,6,12,0)');
-        c.fillStyle = gd;
-        c.beginPath(); c.arc(0, 0, d.r * P.s, 0, Math.PI * 2); c.fill();
-        c.restore();
-      }
-
-      // Horizon haze
-      const fog = c.createLinearGradient(0, hz, 0, hz + this.h * 0.14);
-      fog.addColorStop(0, 'rgba(15,42,64,0.95)');
-      fog.addColorStop(1, 'rgba(15,42,64,0)');
-      c.fillStyle = fog;
-      c.fillRect(0, hz - 1, this.w, this.h * 0.14 + 1);
     }
 
-    drawFloorLights(g) {
+    drawTileBox(tx, ty, h, col, top, v, key, tall) {
+      const x0 = tx * TS, y0 = ty * TS, x1 = x0 + TS, y1 = y0 + TS;
+      const P = (x, y, a) => this.proj(x, y, a);
       const c = this.ctx;
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      for (const l of this.lights) this.floorLight(l.x, l.y, l.r, l.rgb, 0.55 * (l.life / l.max));
-      for (const s of g.shots) this.floorLight(s.x, s.y, 34, '103,232,249', 0.22);
-      for (const b of g.bullets) this.floorLight(b.x, b.y, 30, b.kind === 'missile' ? '251,146,60' : '248,113,113', 0.2);
-      if (g.mother.bay > 0) this.floorLight(g.mother.x, ROWS[0] - 30, 90, '45,212,191', 0.3 * g.mother.bay);
-      if (g.player.alive) this.floorLight(g.player.x, g.player.y, 60, '45,212,191', 0.12 + g.heat / 100 * 0.1);
-      for (const r of this.rings) {
-        const P = this.proj(r.x, r.y, 0), sq = this.floorSquash(r.x, r.y);
-        c.save();
-        c.translate(P.x, P.y); c.scale(1, sq);
-        c.strokeStyle = 'rgba(' + r.rgb + ',' + (0.8 * r.life / r.maxLife).toFixed(3) + ')';
-        c.lineWidth = Math.max(1, 3 * P.s * 3);
-        c.beginPath(); c.arc(0, 0, r.r * P.s, 0, Math.PI * 2); c.stroke();
-        c.restore();
-      }
-      c.restore();
-    }
-
-    /* ---------------- scene: actors ---------------- */
-
-    drawMother(g) {
-      const c = this.ctx, m = g.mother, t = this.t;
-      const P = this.proj(m.x, m.y, MOTHER_ALT), s = P.s;
-      const r = 82 * s, ry = r * 0.3;
-
-      if (m.bay > 0) {
-        const B = this.proj(m.x, ROWS[0], altFly(ROWS[0]));
-        c.save();
-        c.globalCompositeOperation = 'lighter';
-        const bg = c.createLinearGradient(0, P.y, 0, B.y);
-        bg.addColorStop(0, 'rgba(94,234,212,' + (0.45 * m.bay).toFixed(3) + ')');
-        bg.addColorStop(1, 'rgba(94,234,212,0)');
-        c.fillStyle = bg;
-        c.beginPath();
-        c.moveTo(P.x - r * 0.16, P.y + ry * 0.6);
-        c.lineTo(P.x + r * 0.16, P.y + ry * 0.6);
-        c.lineTo(B.x + 26 * B.s, B.y);
-        c.lineTo(B.x - 26 * B.s, B.y);
-        c.closePath();
-        c.fill();
-        c.restore();
-      }
-
-      // Engine glow beneath the hull
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      const eg = c.createRadialGradient(P.x, P.y + ry * 0.8, 0, P.x, P.y + ry * 0.8, r * 0.9);
-      eg.addColorStop(0, 'rgba(45,212,191,0.35)');
-      eg.addColorStop(1, 'rgba(45,212,191,0)');
-      c.fillStyle = eg;
-      c.beginPath(); c.ellipse(P.x, P.y + ry * 0.8, r * 0.9, ry * 1.2, 0, 0, Math.PI * 2); c.fill();
-      c.restore();
-
-      // Lower hull
-      const lg = c.createLinearGradient(0, P.y, 0, P.y + ry * 1.4);
-      lg.addColorStop(0, '#334155'); lg.addColorStop(1, '#0f172a');
-      this.ellipse(P.x, P.y + ry * 0.45, r * 0.9, ry * 0.95, lg);
-
-      // Main disc
-      const dg = c.createLinearGradient(0, P.y - ry, 0, P.y + ry);
-      dg.addColorStop(0, '#cbd5e1'); dg.addColorStop(0.45, '#64748b'); dg.addColorStop(1, '#1e293b');
-      this.ellipse(P.x, P.y, r, ry, dg);
-      c.strokeStyle = 'rgba(15,23,42,0.55)';
-      c.lineWidth = Math.max(1, s * 1.5);
-      for (const k of [0.82, 0.64]) { c.beginPath(); c.ellipse(P.x, P.y - ry * 0.05, r * k, ry * k, 0, 0, Math.PI * 2); c.stroke(); }
-      for (let i = 0; i < 12; i++) {
-        const a = i / 12 * Math.PI * 2;
-        c.beginPath();
-        c.moveTo(P.x + Math.cos(a) * r * 0.64, P.y - ry * 0.05 + Math.sin(a) * ry * 0.64);
-        c.lineTo(P.x + Math.cos(a) * r * 0.98, P.y + Math.sin(a) * ry * 0.98);
-        c.stroke();
-      }
-
-      // Rim lights
-      const N = 20;
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      for (let i = 0; i < N; i++) {
-        const a = i / N * Math.PI * 2 + t * 0.7;
-        const sn = Math.sin(a);
-        const lx = P.x + Math.cos(a) * r * 0.97, ly = P.y + sn * ry * 0.97;
-        const on = (i + Math.floor(t * 6)) % 4 === 0;
-        const col = i % 2 ? '251,191,36' : '94,234,212';
-        const alpha = (sn > 0 ? 1 : 0.35) * (on ? 1 : 0.45);
-        const lr = Math.max(1, s * (on ? 5 : 3));
-        const gl = c.createRadialGradient(lx, ly, 0, lx, ly, lr * 2.5);
-        gl.addColorStop(0, 'rgba(' + col + ',' + alpha + ')');
-        gl.addColorStop(1, 'rgba(' + col + ',0)');
-        c.fillStyle = gl;
-        c.beginPath(); c.arc(lx, ly, lr * 2.5, 0, Math.PI * 2); c.fill();
-      }
-      c.restore();
-
-      // Upper deck
-      const ug = c.createLinearGradient(0, P.y - ry * 1.2, 0, P.y);
-      ug.addColorStop(0, '#e2e8f0'); ug.addColorStop(1, '#475569');
-      this.ellipse(P.x, P.y - ry * 0.5, r * 0.52, ry * 0.55, ug);
-      // Command dome
-      const dr = r * 0.22;
-      const cg = c.createRadialGradient(P.x - dr * 0.35, P.y - ry * 0.9 - dr * 0.4, dr * 0.05, P.x, P.y - ry * 0.75, dr);
-      cg.addColorStop(0, '#f0fdfa'); cg.addColorStop(0.4, 'rgba(45,212,191,0.85)'); cg.addColorStop(1, 'rgba(15,23,42,0.95)');
-      c.fillStyle = cg;
-      c.beginPath(); c.ellipse(P.x, P.y - ry * 0.65, dr, dr * 0.7, 0, Math.PI, Math.PI * 2); c.fill();
-      // Beacon
-      if (Math.floor(t * 2) % 2 === 0) {
-        c.save();
-        c.globalCompositeOperation = 'lighter';
-        const by = P.y - ry * 0.65 - dr * 0.75;
-        const bgr = c.createRadialGradient(P.x, by, 0, P.x, by, s * 14);
-        bgr.addColorStop(0, 'rgba(248,113,113,1)'); bgr.addColorStop(1, 'rgba(248,113,113,0)');
-        c.fillStyle = bgr;
-        c.beginPath(); c.arc(P.x, by, s * 14, 0, Math.PI * 2); c.fill();
-        c.restore();
-      }
-      // Launch bay
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      const bay = 0.25 + m.bay * 0.75;
-      const lb = c.createRadialGradient(P.x, P.y + ry * 0.85, 0, P.x, P.y + ry * 0.85, r * 0.2);
-      lb.addColorStop(0, 'rgba(204,251,241,' + bay + ')'); lb.addColorStop(1, 'rgba(45,212,191,0)');
-      c.fillStyle = lb;
-      c.beginPath(); c.ellipse(P.x, P.y + ry * 0.85, r * 0.2, ry * 0.4, 0, 0, Math.PI * 2); c.fill();
-      c.restore();
-    }
-
-    drawSaucer(P, r, pal, seed, opts) {
-      const c = this.ctx, t = this.t, x = P.x, y = P.y;
-      const ry = r * 0.36;
-      opts = opts || {};
-
-      if (opts.gun) {
-        c.strokeStyle = '#1f2937';
-        c.lineWidth = Math.max(1.5, r * 0.18);
-        c.beginPath(); c.moveTo(x, y + ry * 0.5); c.lineTo(x, y + ry * 1.8); c.stroke();
-        c.strokeStyle = pal[0];
-        c.lineWidth = Math.max(1, r * 0.08);
-        c.beginPath(); c.moveTo(x, y + ry * 1.4); c.lineTo(x, y + ry * 1.8); c.stroke();
-      }
-      // Underside
-      const lg = c.createLinearGradient(0, y, 0, y + ry * 1.3);
-      lg.addColorStop(0, pal[2]); lg.addColorStop(1, '#0b1220');
-      this.ellipse(x, y + ry * 0.4, r * 0.82, ry * 0.9, lg);
-      // Glow ring underneath
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      const ug = c.createRadialGradient(x, y + ry * 0.7, 0, x, y + ry * 0.7, r * 0.7);
-      ug.addColorStop(0, 'rgba(255,255,255,0.25)'); ug.addColorStop(1, 'rgba(255,255,255,0)');
-      c.fillStyle = ug;
-      c.beginPath(); c.ellipse(x, y + ry * 0.7, r * 0.7, ry * 0.8, 0, 0, Math.PI * 2); c.fill();
-      c.restore();
-      // Disc
-      const dg = c.createLinearGradient(0, y - ry, 0, y + ry);
-      dg.addColorStop(0, opts.flash ? '#ffffff' : pal[1]);
-      dg.addColorStop(0.5, opts.flash ? '#ffffff' : pal[0]);
-      dg.addColorStop(1, pal[2]);
-      this.ellipse(x, y, r, ry, dg);
-      // Dome
-      const dr = r * 0.46;
-      const gg = c.createRadialGradient(x - dr * 0.3, y - ry * 0.3 - dr * 0.55, dr * 0.05, x, y - ry * 0.2, dr);
-      gg.addColorStop(0, '#f0f9ff'); gg.addColorStop(0.45, 'rgba(56,189,248,0.75)'); gg.addColorStop(1, 'rgba(8,20,36,0.95)');
-      c.fillStyle = gg;
-      c.beginPath(); c.ellipse(x, y - ry * 0.15, dr, dr * 0.78, 0, Math.PI, Math.PI * 2); c.closePath(); c.fill();
-      // Rim lights
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      for (let i = 0; i < 8; i++) {
-        const a = t * 2.4 + seed + i / 8 * Math.PI * 2, sn = Math.sin(a);
-        if (sn < -0.2) continue;
-        const lx = x + Math.cos(a) * r * 0.8, ly = y + sn * ry * 0.65;
-        c.fillStyle = i % 2 ? 'rgba(255,255,255,0.95)' : 'rgba(253,230,138,0.95)';
-        c.beginPath(); c.arc(lx, ly, Math.max(0.8, r * 0.07), 0, Math.PI * 2); c.fill();
-      }
-      c.restore();
-    }
-
-    drawDiver(e, alt) {
-      const P = (xx, yy, aa) => this.proj(xx, yy, aa);
-      const pal = PAL.diver, x = e.x, y = e.y, fl = e.hitFlash > 0;
-      const bank = clamp(e.vx / 200, -0.6, 0.6) * 6;
-      const nose = P(x, y + 19, alt - 2), lw = P(x - 18, y - 12, alt + 1 - bank), rw = P(x + 18, y - 12, alt + 1 + bank);
-      const top = P(x, y - 6, alt + 10), tail = P(x, y - 14, alt + 4);
-      this.poly([lw, tail, rw, top], pal[2]);
-      this.poly([nose, lw, top], fl ? '#ffffff' : pal[1]);
-      this.poly([nose, top, rw], fl ? '#ffffff' : pal[0]);
-      const c = this.ctx;
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      const rr = Math.max(2, 7 * tail.s);
-      const eg = c.createRadialGradient(tail.x, tail.y, 0, tail.x, tail.y, rr * 2);
-      eg.addColorStop(0, 'rgba(187,247,208,0.95)'); eg.addColorStop(1, 'rgba(34,197,94,0)');
-      c.fillStyle = eg;
-      c.beginPath(); c.arc(tail.x, tail.y, rr * 2, 0, Math.PI * 2); c.fill();
-      c.restore();
-    }
-
-    drawCrawler(e) {
-      const c = this.ctx, pal = PAL[e.type], t = e.t;
-      const body = this.proj(e.x, e.y, 9), s = body.s;
-      c.strokeStyle = '#0f172a';
-      c.lineWidth = Math.max(1, 2.4 * s);
-      for (const side of [-1, 1]) {
-        for (let k = 0; k < 3; k++) {
-          const ph = Math.sin(t * 14 + k * 2.1 + (side > 0 ? 1.5 : 0));
-          const knee = this.proj(e.x + side * (9 + k * 2), e.y + (k - 1) * 7, 13 + ph * 2);
-          const foot = this.proj(e.x + side * (15 + k * 2), e.y + (k - 1) * 9 + ph * 3, 0);
-          c.beginPath(); c.moveTo(body.x, body.y); c.lineTo(knee.x, knee.y); c.lineTo(foot.x, foot.y); c.stroke();
+      const faces = [];
+      if (this.camWY > y1 && tall(tx, ty + 1) < h) faces.push([[x0, y1], [x1, y1], 0, 1]);   // south
+      if (this.camWY < y0 && tall(tx, ty - 1) < h) faces.push([[x1, y0], [x0, y0], 0, -1]);  // north
+      if (this.camWX > x1 && tall(tx + 1, ty) < h) faces.push([[x1, y1], [x1, y0], 1, 0]);   // east
+      if (this.camWX < x0 && tall(tx - 1, ty) < h) faces.push([[x0, y0], [x0, y1], -1, 0]);  // west
+      for (const [a, b, nx, ny] of faces) {
+        const pa0 = P(a[0], a[1], 0), pb0 = P(b[0], b[1], 0), pa1 = P(a[0], a[1], h), pb1 = P(b[0], b[1], h);
+        this.poly([pa0, pb0, pb1, pa1], shade(col, faceLight(nx, ny) * 0.85));
+        if (key === 'base' && v === T.WALL && (tx + ty) % 3 === 0) {
+          const m0 = P(lerp(a[0], b[0], 0.3), lerp(a[1], b[1], 0.3), h * 0.55), m1 = P(lerp(a[0], b[0], 0.7), lerp(a[1], b[1], 0.7), h * 0.55);
+          c.strokeStyle = 'rgba(94,234,212,0.9)';
+          c.lineWidth = Math.max(1, 2.5 * m0.s);
+          c.beginPath(); c.moveTo(m0.x, m0.y); c.lineTo(m1.x, m1.y); c.stroke();
+        } else if (v === T.BLOCK) {
+          const m0 = P(a[0], a[1], h * 0.5), m1 = P(b[0], b[1], h * 0.5);
+          c.strokeStyle = 'rgba(0,0,0,0.25)';
+          c.lineWidth = Math.max(1, 2 * m0.s);
+          c.beginPath(); c.moveTo(m0.x, m0.y); c.lineTo(m1.x, m1.y); c.stroke();
+        } else if (v === T.FORT && (tx + ty) % 2 === 0) {
+          const m = P(lerp(a[0], b[0], 0.5), lerp(a[1], b[1], 0.5), h * 0.6);
+          c.fillStyle = Math.floor(this.t * 3 + tx) % 2 ? '#ef4444' : '#7f1d1d';
+          c.fillRect(m.x - 2 * m.s * 2, m.y - m.s * 2, 4 * m.s * 2, 2 * m.s * 2);
         }
       }
-      const r = (e.w / 2 + 3) * s;
-      const bg = c.createRadialGradient(body.x - r * 0.3, body.y - r * 0.5, r * 0.1, body.x, body.y, r);
-      bg.addColorStop(0, e.hitFlash > 0 ? '#ffffff' : pal[1]); bg.addColorStop(0.5, pal[0]); bg.addColorStop(1, pal[2]);
-      c.fillStyle = bg;
-      c.beginPath(); c.ellipse(body.x, body.y, r, r * 0.7, 0, Math.PI, Math.PI * 2); c.closePath(); c.fill();
-      this.ellipse(body.x, body.y, r, r * 0.22, pal[2]);
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      for (const dx of [-0.35, 0.35]) {
-        const ex = body.x + dx * r, ey = body.y - r * 0.18;
-        const eg = c.createRadialGradient(ex, ey, 0, ex, ey, r * 0.3);
-        eg.addColorStop(0, 'rgba(254,202,202,1)'); eg.addColorStop(1, 'rgba(239,68,68,0)');
-        c.fillStyle = eg;
-        c.beginPath(); c.arc(ex, ey, r * 0.3, 0, Math.PI * 2); c.fill();
+      const t = [P(x0, y0, h), P(x1, y0, h), P(x1, y1, h), P(x0, y1, h)];
+      this.poly(t, shade(top, 1));
+      // edge highlight on exposed top edges
+      c.strokeStyle = 'rgba(255,255,255,0.14)';
+      c.lineWidth = Math.max(1, t[0].s * 1.2);
+      c.beginPath();
+      if (tall(tx, ty - 1) < h) { c.moveTo(t[0].x, t[0].y); c.lineTo(t[1].x, t[1].y); }
+      if (tall(tx - 1, ty) < h) { c.moveTo(t[0].x, t[0].y); c.lineTo(t[3].x, t[3].y); }
+      c.stroke();
+      if (v === T.BLOCK) {
+        c.strokeStyle = 'rgba(0,0,0,0.3)';
+        c.beginPath(); c.moveTo(t[0].x, t[0].y); c.lineTo(t[2].x, t[2].y); c.stroke();
       }
-      c.restore();
     }
 
-    drawEnemy(e) {
-      const alt = enemyAlt(e);
-      if (e.state === 'crawl') { this.drawCrawler(e); return; }
-      if (e.type === 'diver') { this.drawDiver(e, alt); return; }
-      const P = this.proj(e.x, e.y, alt);
-      const pal = PAL[e.type], fl = e.hitFlash > 0;
-      if (e.type === 'splitter') {
-        const off = 12;
-        const L = this.proj(e.x - off, e.y, alt), R = this.proj(e.x + off, e.y, alt);
-        const c = this.ctx;
-        c.save();
-        c.globalCompositeOperation = 'lighter';
-        c.strokeStyle = 'rgba(94,234,212,' + (0.5 + 0.3 * Math.sin(this.t * 10)).toFixed(2) + ')';
-        c.lineWidth = Math.max(1.5, 3 * P.s);
-        c.beginPath(); c.moveTo(L.x, L.y); c.lineTo(R.x, R.y); c.stroke();
-        c.restore();
-        this.drawSaucer(L, 13 * L.s, pal, e.id, { flash: fl });
-        this.drawSaucer(R, 13 * R.s, pal, e.id + 2, { flash: fl });
-        return;
-      }
-      const r = (e.w / 2 + 2) * P.s * 1.3;
-      this.drawSaucer(P, r, pal, e.id, { flash: fl, gun: e.type === 'gunner' });
-      if (e.type === 'gunner' && e.hp < 2 && Math.random() < 0.3) {
-        this.smoke.push(this.puff(e.x + rnd(-6, 6), e.y, alt + 4, 0.6, '71,85,105'));
+    drawTree(cx, cy, tx, ty) {
+      const P = this.pal.tree, c = this.ctx;
+      const jx = ((tx * 7 + ty * 13) % 7) - 3, jy = ((tx * 11 + ty * 5) % 7) - 3;
+      const x = cx + jx, y = cy + jy;
+      this.beam(x, y, 0, x, y, 14, 4, '#4a3020');
+      const layers = [[16, 12, P[2]], [13, 22, P[0]], [9, 30, P[1]]];
+      for (const [r, alt, col] of layers) {
+        const p = this.proj(x, y, alt);
+        const rr = r * p.s;
+        const g = c.createRadialGradient(p.x - rr * 0.35, p.y - rr * 0.4, rr * 0.1, p.x, p.y, rr);
+        g.addColorStop(0, shade(col, 1.25));
+        g.addColorStop(1, shade(col, 0.7));
+        c.fillStyle = g;
+        c.beginPath(); c.ellipse(p.x, p.y, rr, rr * 0.8, 0, 0, TAU); c.fill();
       }
     }
 
     drawPlayer(g) {
       const p = g.player, c = this.ctx;
-      if (!p.alive) return;
       c.save();
-      if (p.invuln > 0 && Math.floor(this.t * 12) % 2) c.globalAlpha = 0.45;
-      const x = p.x, y = p.y;
-      const heat = g.heat / 100;
-
-      this.box(x - 15, y, 6, 14, 0, 7, '#334155', '#1e293b', '#111827');
-      this.box(x + 15, y, 6, 14, 0, 7, '#334155', '#1e293b', '#111827');
-      // Tread ribs
-      c.strokeStyle = 'rgba(15,23,42,0.85)';
-      c.lineWidth = Math.max(1, this.proj(x, y, 7).s * 1.2);
-      const roll = (this.t * (p.vx / 30)) % 1;
-      for (const tx of [x - 15, x + 15]) {
-        for (let k = 0; k < 5; k++) {
-          const yy = y - 14 + ((k + roll + 5) % 5) / 5 * 28;
-          const a = this.proj(tx - 6, yy, 7), b = this.proj(tx + 6, yy, 7);
-          c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+      if (p.invuln > 0 && p.invuln < 50 && Math.floor(this.t * 14) % 2) c.globalAlpha = 0.4;
+      const base = p.lift * 80 + (p.jump ? p.alt * 60 : 0);
+      const pitch = p.wheelie * 0.75;
+      const ph = p.tread % 8;
+      for (const side of [-1, 1]) {
+        const ox = p.x + Math.cos(p.a) * side * 13, oy = p.y + Math.sin(p.a) * side * 13;
+        this.obox(ox, oy, p.a, 5, 15, base, base + 9, '#2a2e36', { pitch, top: '#3a3f48' });
+        // tread lugs
+        for (let k = -15 + ph * 0.5; k < 15; k += 4) {
+          const lx = ox + Math.sin(p.a) * k, ly = oy - Math.cos(p.a) * k;
+          const a0 = this.proj(lx - Math.cos(p.a) * 5, ly - Math.sin(p.a) * 5, base + 9 + (k + 15) * pitch);
+          const a1 = this.proj(lx + Math.cos(p.a) * 5, ly + Math.sin(p.a) * 5, base + 9 + (k + 15) * pitch);
+          c.strokeStyle = '#15171c'; c.lineWidth = Math.max(1, a0.s);
+          c.beginPath(); c.moveTo(a0.x, a0.y); c.lineTo(a1.x, a1.y); c.stroke();
         }
       }
-      this.box(x, y, 13, 11, 4, 12, '#64748b', '#475569', '#334155');
-
-      // Accent strip
-      const a1 = this.proj(x - 11, y + 11, 8.5), a2 = this.proj(x + 11, y + 11, 8.5);
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      c.strokeStyle = 'rgba(94,234,212,0.95)';
-      c.lineWidth = Math.max(1.2, 2 * a1.s * 1.5);
-      c.shadowColor = '#2dd4bf';
-      c.shadowBlur = 8 * this.ui;
-      c.beginPath(); c.moveTo(a1.x, a1.y); c.lineTo(a2.x, a2.y); c.stroke();
-      c.restore();
-
-      const recoil = p.recoil * 5;
-      const base = this.proj(x, y, 17);
-      let end;
-      if (p.aim === 'up') end = this.proj(x, y - 26 + recoil, 21);
-      else if (p.aim === 'left') end = this.proj(x - 28 + recoil, y, 18);
-      else end = this.proj(x + 28 - recoil, y, 18);
-
+      this.obox(p.x, p.y, p.a, 9, 13, base + 4, base + 13, '#b8c0cc', { pitch, top: '#dfe4ea' });
+      const fx = Math.sin(p.a), fy = -Math.cos(p.a);
+      const tAlt = base + 13 + 12 * pitch;
+      // blue stripe on the hull deck
+      const s0 = this.proj(p.x - Math.cos(p.a) * 8 - fx * 8, p.y - Math.sin(p.a) * 8 - fy * 8, base + 13.2 + 5 * pitch);
+      const s1 = this.proj(p.x + Math.cos(p.a) * 8 - fx * 8, p.y + Math.sin(p.a) * 8 - fy * 8, base + 13.2 + 5 * pitch);
+      c.strokeStyle = '#2f6fd8'; c.lineWidth = Math.max(1, 3 * s0.s);
+      c.beginPath(); c.moveTo(s0.x, s0.y); c.lineTo(s1.x, s1.y); c.stroke();
+      const len = 24 - p.recoil * 5;
+      const front = this.depth(p.x + fx * 20, p.y + fy * 20) < this.depth(p.x, p.y);
       const drawBarrel = () => {
-        c.save();
-        c.lineCap = 'round';
-        c.strokeStyle = '#1e293b';
-        c.lineWidth = Math.max(2, 6 * base.s);
-        c.beginPath(); c.moveTo(base.x, base.y); c.lineTo(end.x, end.y); c.stroke();
-        c.strokeStyle = mix('#94a3b8', '#fb923c', heat);
-        c.lineWidth = Math.max(1, 3.4 * base.s);
-        if (heat > 0.5) { c.shadowColor = 'rgba(249,115,22,' + (heat - 0.5) * 2 + ')'; c.shadowBlur = 14 * this.ui * heat; }
-        c.beginPath(); c.moveTo(base.x, base.y); c.lineTo(end.x, end.y); c.stroke();
-        c.restore();
+        this.beam(p.x, p.y, tAlt + 3, p.x + fx * len, p.y + fy * len, tAlt + 3 + len * pitch, 4.5, '#2a2e36');
+        this.beam(p.x, p.y, tAlt + 3.5, p.x + fx * len, p.y + fy * len, tAlt + 3.5 + len * pitch, 2.5, '#c8ced8');
       };
-
-      if (p.aim === 'up') drawBarrel();
-      this.box(x, y + 1, 8, 7, 12, 17, '#94a3b8', '#64748b', '#475569');
-      const dome = this.proj(x, y + 1, 17);
-      const dr = 6 * dome.s;
-      const dg = c.createRadialGradient(dome.x - dr * 0.3, dome.y - dr * 0.6, dr * 0.1, dome.x, dome.y, dr);
-      dg.addColorStop(0, '#f0fdfa'); dg.addColorStop(0.5, '#2dd4bf'); dg.addColorStop(1, '#134e4a');
-      c.fillStyle = dg;
-      c.beginPath(); c.ellipse(dome.x, dome.y, dr, dr * 0.75, 0, Math.PI, Math.PI * 2); c.closePath(); c.fill();
-      if (p.aim !== 'up') drawBarrel();
-
-      if (heat > 0.6 && Math.random() < heat * 0.25) {
-        this.smoke.push(this.puff(x + rnd(-3, 3), y, 24, 0.8, '100,116,139'));
-      }
-
-      if (p.invuln > 0) {
-        const P = this.proj(x, y, 12);
+      if (!front) drawBarrel();
+      this.obox(p.x - fx * 1, p.y - fy * 1, p.a, 6, 7, tAlt, tAlt + 6, '#d6dbe3', { pitch: pitch * 0.4, top: '#f4f6f8' });
+      if (front) drawBarrel();
+      if (p.invuln > 0 && p.invuln < 50) {
+        const P = this.proj(p.x, p.y, base + 12);
         c.globalAlpha = 1;
         c.globalCompositeOperation = 'lighter';
         const rr = 30 * P.s;
-        const sg = c.createRadialGradient(P.x, P.y, rr * 0.6, P.x, P.y, rr);
+        const sg = c.createRadialGradient(P.x, P.y, rr * 0.55, P.x, P.y, rr);
         sg.addColorStop(0, 'rgba(45,212,191,0)');
-        sg.addColorStop(1, 'rgba(45,212,191,' + (0.35 + 0.15 * Math.sin(this.t * 12)).toFixed(2) + ')');
+        sg.addColorStop(1, 'rgba(45,212,191,' + (0.3 + 0.15 * Math.sin(this.t * 12)).toFixed(2) + ')');
         c.fillStyle = sg;
-        c.beginPath(); c.ellipse(P.x, P.y, rr, rr * 0.8, 0, 0, Math.PI * 2); c.fill();
+        c.beginPath(); c.ellipse(P.x, P.y, rr, rr * 0.75, 0, 0, TAU); c.fill();
       }
       c.restore();
+    }
+
+    drawEnemy(g, e) {
+      const c = this.ctx, fl = e.hitFlash > 0;
+      switch (e.type) {
+        case 'tank': {
+          for (const side of [-1, 1]) {
+            this.obox(e.x + Math.cos(e.a) * side * 11, e.y + Math.sin(e.a) * side * 11, e.a, 4, 13, 0, 8, '#2a1e1a', { top: '#3a2a24' });
+          }
+          this.obox(e.x, e.y, e.a, 8, 11, 3, 11, fl ? '#ffffff' : '#9a3a24', { top: fl ? '#ffffff' : '#c8502e' });
+          const fx = Math.sin(e.ta), fy = -Math.cos(e.ta);
+          const back = this.depth(e.x + fx * 10, e.y + fy * 10) > this.depth(e.x, e.y);
+          const barrel = () => this.beam(e.x, e.y, 15, e.x + fx * 22, e.y + fy * 22, 15, 3.5, '#241a16');
+          if (back) barrel();
+          this.obox(e.x, e.y, e.ta, 5.5, 6, 11, 17, fl ? '#ffffff' : '#b8482a', { top: fl ? '#ffffff' : '#e06a40' });
+          if (!back) barrel();
+          break;
+        }
+        case 'turret': {
+          this.obox(e.x, e.y, 0, 13, 13, 0, 9, '#6e737c', { top: '#8a9099' });
+          const fx = Math.sin(e.ta), fy = -Math.cos(e.ta), rx = Math.cos(e.ta), ry = Math.sin(e.ta);
+          const back = this.depth(e.x + fx * 10, e.y + fy * 10) > this.depth(e.x, e.y);
+          const barrels = () => {
+            for (const s of [-3.5, 3.5]) this.beam(e.x + rx * s, e.y + ry * s, 15, e.x + rx * s + fx * 22, e.y + ry * s + fy * 22, 15, 3, '#1f1f24');
+          };
+          if (back) barrels();
+          this.obox(e.x, e.y, e.ta, 8, 8, 9, 18, fl ? '#ffffff' : '#a8321f', { top: fl ? '#ffffff' : '#d8503a' });
+          if (!back) barrels();
+          const P = this.proj(e.x, e.y, 18.5);
+          c.fillStyle = Math.floor(this.t * 4 + e.id) % 2 ? '#fde047' : '#713f12';
+          c.beginPath(); c.arc(P.x, P.y, Math.max(1, 2.2 * P.s), 0, TAU); c.fill();
+          break;
+        }
+        case 'mortar': {
+          this.obox(e.x, e.y, 0, 13, 13, 0, 6, '#8a7650', { top: '#b8a070' });
+          this.obox(e.x, e.y, 0, 8, 8, 0, 6.5, '#3a3428', { top: '#2a261e' });
+          const fx = Math.sin(e.ta), fy = -Math.cos(e.ta);
+          this.beam(e.x, e.y, 6, e.x + fx * 8, e.y + fy * 8, 24, 7, '#1f1f1c');
+          this.beam(e.x, e.y, 6, e.x + fx * 8, e.y + fy * 8, 24, 4.5, fl ? '#ffffff' : '#6a6a5a');
+          break;
+        }
+        case 'chopper': {
+          const alt = 68 + Math.sin(e.t * 2 + e.id) * 4;
+          const fx = Math.sin(e.a), fy = -Math.cos(e.a);
+          this.beam(e.x, e.y, alt + 4, e.x - fx * 26, e.y - fy * 26, alt + 6, 3, '#2a3440');
+          this.obox(e.x, e.y, e.a, 6, 11, alt, alt + 9, fl ? '#ffffff' : '#3e5468', { top: fl ? '#ffffff' : '#56718a' });
+          const cp = this.proj(e.x + fx * 7, e.y + fy * 7, alt + 8);
+          c.fillStyle = '#7ad8f0';
+          c.beginPath(); c.ellipse(cp.x, cp.y, 4 * cp.s, 3 * cp.s, 0, 0, TAU); c.fill();
+          // rotor disc
+          const rp = this.proj(e.x, e.y, alt + 12), rr = 20 * rp.s;
+          c.fillStyle = 'rgba(203,213,225,0.16)';
+          c.beginPath(); c.ellipse(rp.x, rp.y, rr, rr * (this.camH - alt) / Math.max(40, rp.z) + rr * 0.15, 0, 0, TAU); c.fill();
+          c.strokeStyle = 'rgba(226,232,240,0.6)';
+          c.lineWidth = Math.max(1, 1.5 * rp.s);
+          const ra = this.t * 24;
+          for (let k = 0; k < 2; k++) {
+            const a = ra + k * Math.PI / 2;
+            const r0 = this.proj(e.x + Math.cos(a) * 20, e.y + Math.sin(a) * 20, alt + 12), r1 = this.proj(e.x - Math.cos(a) * 20, e.y - Math.sin(a) * 20, alt + 12);
+            c.beginPath(); c.moveTo(r0.x, r0.y); c.lineTo(r1.x, r1.y); c.stroke();
+          }
+          break;
+        }
+        case 'fortgun': {
+          const fx = Math.sin(e.ta), fy = -Math.cos(e.ta);
+          const back = this.depth(e.x + fx * 10, e.y + fy * 10) > this.depth(e.x, e.y);
+          const barrel = () => this.beam(e.x, e.y, 54, e.x + fx * 26, e.y + fy * 26, 54, 5, '#141416');
+          if (back) barrel();
+          this.obox(e.x, e.y, 0, 13, 13, 40, 46, '#3a3434', { top: '#4a4040' });
+          this.obox(e.x, e.y, e.ta, 9, 10, 46, 58, fl ? '#ffffff' : '#7a2a24', { top: fl ? '#ffffff' : '#a8443a' });
+          if (!back) barrel();
+          const P = this.proj(e.x, e.y, 58.5);
+          c.fillStyle = Math.floor(this.t * 5 + e.id) % 2 ? '#f87171' : '#7f1d1d';
+          c.beginPath(); c.arc(P.x, P.y, Math.max(1, 2.5 * P.s), 0, TAU); c.fill();
+          break;
+        }
+        case 'core': {
+          if (!g.coreOpen) {
+            this.obox(e.x, e.y, 0, 34, 20, 40, 50, '#3a3a44', { top: '#5a5a66' });
+            for (let i = -2; i <= 2; i++) this.obox(e.x + i * 12, e.y, 0, 4, 18, 50, 54, '#6a6a76', { top: '#8a8a96' });
+            break;
+          }
+          this.obox(e.x, e.y, 0, 30, 18, 40, 46, '#2a1a18', { top: '#3a2420' });
+          const P = this.proj(e.x, e.y, 62), pulse = 0.5 + 0.5 * Math.sin(this.t * 8);
+          const rr = (20 + pulse * 3) * P.s;
+          c.save();
+          c.globalCompositeOperation = 'lighter';
+          const gl = c.createRadialGradient(P.x, P.y, 0, P.x, P.y, rr * 2.4);
+          gl.addColorStop(0, 'rgba(255,237,213,0.9)');
+          gl.addColorStop(0.35, 'rgba(249,115,22,0.7)');
+          gl.addColorStop(1, 'rgba(239,68,68,0)');
+          c.fillStyle = gl;
+          c.beginPath(); c.arc(P.x, P.y, rr * 2.4, 0, TAU); c.fill();
+          c.restore();
+          const sg = c.createRadialGradient(P.x - rr * 0.3, P.y - rr * 0.35, rr * 0.1, P.x, P.y, rr);
+          sg.addColorStop(0, fl ? '#ffffff' : '#fff7ed');
+          sg.addColorStop(0.4, '#fb923c');
+          sg.addColorStop(1, '#7f1d1d');
+          c.fillStyle = sg;
+          c.beginPath(); c.arc(P.x, P.y, rr, 0, TAU); c.fill();
+          break;
+        }
+      }
     }
 
     drawShot(s) {
       const c = this.ctx;
-      let head, tail;
-      if (s.dir === 'up') {
-        head = this.proj(s.x, s.y, altFly(s.y) * 0.5 + 12);
-        tail = this.proj(s.x, s.y + 34, altFly(s.y + 34) * 0.5 + 12);
-      } else {
-        head = this.proj(s.x, s.y, 16);
-        tail = this.proj(s.x - Math.sign(s.vx) * 34, s.y, 16);
-      }
+      const head = this.proj(s.x, s.y, 16), tail = this.proj(s.x - s.vx * 0.05, s.y - s.vy * 0.05, 16);
       c.save();
       c.globalCompositeOperation = 'lighter';
       c.lineCap = 'round';
       const gr = c.createLinearGradient(tail.x, tail.y, head.x, head.y);
-      gr.addColorStop(0, 'rgba(34,211,238,0)');
-      gr.addColorStop(1, 'rgba(103,232,249,0.95)');
+      gr.addColorStop(0, 'rgba(253,224,71,0)');
+      gr.addColorStop(1, 'rgba(254,240,138,0.95)');
       c.strokeStyle = gr;
-      c.lineWidth = Math.max(2.5, 7 * head.s);
-      c.shadowColor = '#22d3ee';
-      c.shadowBlur = 16 * this.ui;
+      c.lineWidth = Math.max(2, 6 * head.s);
+      c.shadowColor = '#fde047';
+      c.shadowBlur = 12 * this.ui;
       c.beginPath(); c.moveTo(tail.x, tail.y); c.lineTo(head.x, head.y); c.stroke();
       c.shadowBlur = 0;
-      c.strokeStyle = 'rgba(255,255,255,0.95)';
-      c.lineWidth = Math.max(1, 2.5 * head.s);
-      c.beginPath(); c.moveTo(lerp(tail.x, head.x, 0.5), lerp(tail.y, head.y, 0.5)); c.lineTo(head.x, head.y); c.stroke();
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = Math.max(1, 2 * head.s);
+      c.beginPath(); c.moveTo(lerp(tail.x, head.x, 0.6), lerp(tail.y, head.y, 0.6)); c.lineTo(head.x, head.y); c.stroke();
       c.restore();
     }
 
-    drawBullet(b) {
-      const c = this.ctx;
-      const P = this.proj(b.x, b.y, altFly(b.y));
-      const back = 0.07;
-      const T = this.proj(b.x - b.vx * back, b.y - b.vy * back, altFly(b.y - b.vy * back));
-      const missile = b.kind === 'missile';
-      const rgb = missile ? '251,146,60' : '248,113,113';
-      const r = Math.max(2, (missile ? 6 : 5.5) * P.s);
+    drawEShot(b) {
+      const c = this.ctx, alt = b.flying ? 40 : b.fromFort ? 40 : 14;
+      const P = this.proj(b.x, b.y, alt);
+      const plasma = b.kind === 'plasma';
+      const rgbs = plasma ? '244,63,94' : '251,146,60';
+      const r = Math.max(2, (plasma ? 4 : 3.4) * P.s);
       c.save();
       c.globalCompositeOperation = 'lighter';
-      const tg = c.createLinearGradient(T.x, T.y, P.x, P.y);
-      tg.addColorStop(0, 'rgba(' + rgb + ',0)');
-      tg.addColorStop(1, 'rgba(' + rgb + ',0.7)');
-      c.strokeStyle = tg;
-      c.lineWidth = r * 1.2;
-      c.lineCap = 'round';
-      c.beginPath(); c.moveTo(T.x, T.y); c.lineTo(P.x, P.y); c.stroke();
-      const gg = c.createRadialGradient(P.x, P.y, 0, P.x, P.y, r * 2.6);
+      const gg = c.createRadialGradient(P.x, P.y, 0, P.x, P.y, r * 2.2);
       gg.addColorStop(0, 'rgba(255,255,255,1)');
-      gg.addColorStop(0.3, 'rgba(' + rgb + ',0.95)');
-      gg.addColorStop(1, 'rgba(' + rgb + ',0)');
+      gg.addColorStop(0.4, 'rgba(' + rgbs + ',0.95)');
+      gg.addColorStop(1, 'rgba(' + rgbs + ',0)');
       c.fillStyle = gg;
-      c.beginPath(); c.arc(P.x, P.y, r * 2.6, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(P.x, P.y, r * 2.2, 0, TAU); c.fill();
       c.restore();
+    }
+
+    drawGrenade(gr) {
+      const c = this.ctx;
+      const alt = gr.alt * 70 + 6;
+      const P = this.proj(gr.x, gr.y, alt), r = Math.max(1.5, 4 * P.s);
+      const g = c.createRadialGradient(P.x - r * 0.3, P.y - r * 0.3, r * 0.1, P.x, P.y, r);
+      g.addColorStop(0, gr.owner === 'enemy' ? '#fdba74' : '#d9f99d');
+      g.addColorStop(1, gr.owner === 'enemy' ? '#431407' : '#1a2e05');
+      c.fillStyle = g;
+      c.beginPath(); c.arc(P.x, P.y, r, 0, TAU); c.fill();
     }
 
     drawParticles() {
       const c = this.ctx;
-      // Smoke (normal blend)
       for (const s of this.smoke) {
-        const P = this.proj(s.x, s.y, s.alt), k = s.life / s.max;
-        const rr = s.r * P.s;
+        const P = this.proj(s.x, s.y, s.alt);
+        if (P.z < 20) continue;
+        const k = s.life / s.max, rr = s.r * P.s;
         const g = c.createRadialGradient(P.x, P.y, 0, P.x, P.y, rr);
-        g.addColorStop(0, 'rgba(' + s.rgb + ',' + (0.4 * k).toFixed(3) + ')');
+        g.addColorStop(0, 'rgba(' + s.rgb + ',' + (0.45 * k).toFixed(3) + ')');
         g.addColorStop(1, 'rgba(' + s.rgb + ',0)');
         c.fillStyle = g;
-        c.beginPath(); c.arc(P.x, P.y, rr, 0, Math.PI * 2); c.fill();
+        c.beginPath(); c.arc(P.x, P.y, rr, 0, TAU); c.fill();
       }
-      // Debris
       for (const p of this.parts) {
         if (p.glow) continue;
         const P = this.proj(p.x, p.y, p.alt), sz = p.size * P.s;
+        if (P.z < 20) continue;
         c.save();
         c.globalAlpha = clamp(p.life / 0.4, 0, 1);
         c.translate(P.x, P.y); c.rotate(p.rot);
@@ -887,49 +707,46 @@
         c.fillRect(-sz, -sz * 0.6, sz * 2, sz * 1.2);
         c.restore();
       }
-      // Sparks (additive streaks)
       c.save();
       c.globalCompositeOperation = 'lighter';
       c.lineCap = 'round';
       for (const p of this.parts) {
         if (!p.glow) continue;
         const P = this.proj(p.x, p.y, p.alt);
+        if (P.z < 20) continue;
         const Q = this.proj(p.x - p.vx * 0.03, p.y - p.vy * 0.03, p.alt - p.va * 0.03);
         c.globalAlpha = clamp(p.life / p.max * 1.5, 0, 1);
         c.strokeStyle = p.color;
         c.lineWidth = Math.max(1, p.size * P.s * 2.2);
         c.beginPath(); c.moveTo(Q.x, Q.y); c.lineTo(P.x, P.y); c.stroke();
       }
-      // Air-burst flashes
+      c.globalAlpha = 1;
       for (const l of this.lights) {
-        if (!l.alt) continue;
+        if (l.alt === undefined) continue;
         const P = this.proj(l.x, l.y, l.alt), k = l.life / l.max;
+        if (P.z < 20) continue;
         const rr = l.r * 0.5 * P.s * (1.4 - k * 0.4);
         const g = c.createRadialGradient(P.x, P.y, 0, P.x, P.y, rr);
         g.addColorStop(0, 'rgba(255,255,255,' + (0.9 * k).toFixed(3) + ')');
         g.addColorStop(0.35, 'rgba(' + l.rgb + ',' + (0.6 * k).toFixed(3) + ')');
         g.addColorStop(1, 'rgba(' + l.rgb + ',0)');
-        c.globalAlpha = 1;
         c.fillStyle = g;
-        c.beginPath(); c.arc(P.x, P.y, rr, 0, Math.PI * 2); c.fill();
+        c.beginPath(); c.arc(P.x, P.y, rr, 0, TAU); c.fill();
       }
       c.restore();
     }
 
-    drawPopups() {
-      const c = this.ctx, u = this.ui;
+    drawGuide(g) {
+      const p = g.player;
+      if (!p.alive || g.state !== 'play' || Math.floor(this.t * 3) % 2) return;
+      const ga = g.guideAngle(p.x, p.y), fx = Math.sin(ga), fy = -Math.cos(ga), rx = Math.cos(ga), ry = Math.sin(ga);
+      const cx = p.x + fx * 52, cy = p.y + fy * 52;
+      const pt = (u, v) => this.proj(cx + rx * u + fx * v, cy + ry * u + fy * v, 1);
+      const shape = [pt(0, 14), pt(11, 0), pt(4, 0), pt(4, -12), pt(-4, -12), pt(-4, 0), pt(-11, 0)];
+      const c = this.ctx;
       c.save();
-      c.textAlign = 'center';
-      c.textBaseline = 'middle';
-      for (const p of this.popups) {
-        const P = this.proj(p.x, p.y, p.alt);
-        c.globalAlpha = clamp(p.life / p.max * 2, 0, 1);
-        c.font = '700 ' + Math.round(15 * u) + 'px Rajdhani, "Segoe UI", sans-serif';
-        c.fillStyle = p.color || '#fde68a';
-        c.shadowColor = 'rgba(0,0,0,0.8)';
-        c.shadowBlur = 6 * u;
-        c.fillText(p.text, P.x, P.y);
-      }
+      c.globalCompositeOperation = 'lighter';
+      this.poly(shape, 'rgba(253,224,71,0.75)');
       c.restore();
     }
 
@@ -938,7 +755,7 @@
     panel(x, y, w, h) {
       const c = this.ctx;
       global.roundRectPath(c, x, y, w, h, 10 * this.ui);
-      c.fillStyle = 'rgba(15,23,42,0.62)';
+      c.fillStyle = 'rgba(15,23,42,0.66)';
       c.fill();
       c.strokeStyle = 'rgba(148,163,184,0.16)';
       c.lineWidth = Math.max(1, this.ui);
@@ -946,94 +763,65 @@
     }
 
     label(text, x, y, align, color) {
-      const c = this.ctx, u = this.ui;
+      const c = this.ctx;
       c.textAlign = align;
-      c.font = '600 ' + Math.round(12 * u) + 'px Rajdhani, "Segoe UI", sans-serif';
+      c.font = '600 ' + Math.round(12 * this.ui) + 'px Rajdhani, "Segoe UI", sans-serif';
       c.fillStyle = color || '#94a3b8';
       c.fillText(text.split('').join(String.fromCharCode(8202)), x, y);
+    }
+
+    value(text, x, y, align, color, size) {
+      const c = this.ctx;
+      c.textAlign = align;
+      c.font = '700 ' + Math.round((size || 26) * this.ui) + 'px Orbitron, "Segoe UI", sans-serif';
+      c.fillStyle = color;
+      c.fillText(text, x, y);
     }
 
     drawHUD(g) {
       const c = this.ctx, u = this.ui, w = this.w, h = this.h, pad = 18 * u, t = this.t;
       c.save();
       c.textBaseline = 'alphabetic';
-
-      // Top: score / hi / wave
       const pw = 200 * u, ph = 58 * u;
       this.panel(pad, pad, pw, ph);
       this.label('SCORE', pad + 16 * u, pad + 20 * u, 'left');
-      c.font = '700 ' + Math.round(26 * u) + 'px Orbitron, "Segoe UI", sans-serif';
-      c.fillStyle = '#f8fafc';
-      c.textAlign = 'left';
-      c.fillText(String(g.score).padStart(7, '0'), pad + 16 * u, pad + 48 * u);
+      this.value(String(g.score).padStart(7, '0'), pad + 16 * u, pad + 48 * u, 'left', '#f8fafc');
 
       this.panel(w / 2 - pw / 2, pad, pw, ph);
       this.label('HIGH SCORE', w / 2, pad + 20 * u, 'center');
-      c.font = '700 ' + Math.round(26 * u) + 'px Orbitron, "Segoe UI", sans-serif';
-      c.fillStyle = '#fbbf24';
-      c.textAlign = 'center';
-      c.fillText(String(Math.max(g.hiScore, g.score)).padStart(7, '0'), w / 2, pad + 48 * u);
+      this.value(String(Math.max(g.hiScore, g.score)).padStart(7, '0'), w / 2, pad + 48 * u, 'center', '#fbbf24');
 
-      const ww = 130 * u;
-      this.panel(w - pad - ww, pad, ww, ph);
-      this.label('WAVE', w - pad - 16 * u, pad + 20 * u, 'right');
-      c.font = '700 ' + Math.round(26 * u) + 'px Orbitron, "Segoe UI", sans-serif';
-      c.fillStyle = '#5eead4';
-      c.textAlign = 'right';
-      c.fillText(String(g.wave).padStart(2, '0'), w - pad - 16 * u, pad + 48 * u);
+      const tw = 150 * u;
+      this.panel(w - pad - tw, pad, tw, ph);
+      this.label('TIME', w - pad - 16 * u, pad + 20 * u, 'right');
+      const tl = Math.ceil(g.timeLeft);
+      this.value(String(tl).padStart(3, '0'), w - pad - 16 * u, pad + 48 * u, 'right', tl <= 30 ? (Math.floor(t * 4) % 2 ? '#f87171' : '#fbbf24') : '#5eead4');
 
-      // Bottom-left: lives
-      const bh = 62 * u, by = h - pad - bh;
-      this.panel(pad, by, 200 * u, bh);
-      this.label('RESERVE CANNONS', pad + 16 * u, by + 20 * u, 'left');
-      for (let i = 0; i < Math.min(g.lives, 6); i++) {
-        const ix = pad + 26 * u + i * 28 * u, iy = by + 42 * u;
-        c.fillStyle = '#64748b';
-        c.fillRect(ix - 10 * u, iy, 20 * u, 7 * u);
-        c.fillStyle = '#2dd4bf';
-        c.beginPath(); c.ellipse(ix, iy, 6 * u, 5 * u, 0, Math.PI, Math.PI * 2); c.fill();
-        c.fillStyle = '#94a3b8';
-        c.fillRect(ix - 1.2 * u, iy - 11 * u, 2.4 * u, 7 * u);
+      const bh = 58 * u, by = h - pad - bh;
+      this.panel(pad, by, 210 * u, bh);
+      this.label('RESERVE TANKS', pad + 16 * u, by + 20 * u, 'left');
+      for (let i = 0; i < Math.min(Math.max(g.lives - (g.player.alive ? 1 : 0), 0), 6); i++) {
+        const ix = pad + 26 * u + i * 28 * u, iy = by + 34 * u;
+        c.fillStyle = '#3a3f48'; c.fillRect(ix - 10 * u, iy, 5 * u, 16 * u); c.fillRect(ix + 5 * u, iy, 5 * u, 16 * u);
+        c.fillStyle = '#d6dbe3'; c.fillRect(ix - 5 * u, iy + 2 * u, 10 * u, 12 * u);
+        c.fillStyle = '#2f6fd8'; c.fillRect(ix - 3 * u, iy + 6 * u, 6 * u, 3 * u);
+        c.fillStyle = '#d6dbe3'; c.fillRect(ix - 1 * u, iy - 5 * u, 2 * u, 8 * u);
       }
 
-      // Bottom-right: hostiles remaining
-      const left = Math.max(0, g.quota - g.kills);
-      this.panel(w - pad - 200 * u, by, 200 * u, bh);
-      this.label('HOSTILES', w - pad - 16 * u, by + 20 * u, 'right');
-      c.font = '700 ' + Math.round(22 * u) + 'px Orbitron, "Segoe UI", sans-serif';
-      c.fillStyle = '#f8fafc';
-      c.textAlign = 'right';
-      c.fillText(String(left).padStart(2, '0'), w - pad - 16 * u, by + 48 * u);
-      const pipW = 4 * u, pipGap = 2.5 * u;
-      for (let i = 0; i < g.quota; i++) {
-        const row = i < 12 ? 0 : 1, col = i % 12;
-        c.fillStyle = i < g.kills ? 'rgba(148,163,184,0.18)' : '#f59e0b';
-        c.fillRect(w - pad - 184 * u + col * (pipW + pipGap), by + 32 * u + row * 10 * u, pipW, 7 * u);
-      }
+      const aw = 210 * u;
+      this.panel(w - pad - aw, by, aw, bh);
+      this.label(g.stage.theme.name, w - pad - 16 * u, by + 20 * u, 'right');
+      this.value('AREA ' + String(g.stageNum).padStart(2, '0'), w - pad - 16 * u, by + 46 * u, 'right', '#f8fafc', 22);
 
-      // Bottom-centre: cannon heat
-      const hw = Math.min(420 * u, w - 2 * (pad + 220 * u)), hx = (w - hw) / 2;
-      if (hw > 120 * u) {
-        this.panel(hx - 16 * u, by, hw + 32 * u, bh);
-        const hot = g.heat >= HEAT_WARN;
-        this.label('CANNON HEAT', hx, by + 20 * u, 'left', hot && Math.floor(t * 6) % 2 ? '#f87171' : '#94a3b8');
-        this.label(Math.round(g.heat) + '%', hx + hw, by + 20 * u, 'right', hot ? '#f87171' : '#cbd5e1');
-        const segs = 25, gap = 3 * u, sw = (hw - gap * (segs - 1)) / segs, sy = by + 32 * u, sh = 16 * u;
-        for (let i = 0; i < segs; i++) {
-          const k = i / (segs - 1);
-          const on = (i + 1) / segs * 100 <= g.heat + 2;
-          const col = k < 0.55 ? '#2dd4bf' : k < 0.78 ? '#f59e0b' : '#ef4444';
-          c.fillStyle = on ? col : 'rgba(148,163,184,0.12)';
-          if (on) { c.shadowColor = col; c.shadowBlur = 8 * u; } else c.shadowBlur = 0;
-          c.fillRect(hx + i * (sw + gap), sy, sw, sh);
-        }
-        c.shadowBlur = 0;
-        if (hot) {
-          c.strokeStyle = 'rgba(239,68,68,' + (0.5 + 0.5 * Math.sin(t * 14)).toFixed(2) + ')';
-          c.lineWidth = 2 * u;
-          global.roundRectPath(c, hx - 16 * u, by, hw + 32 * u, bh, 10 * u);
-          c.stroke();
-        }
+      const p = g.player;
+      let status = null, sc = '#5eead4';
+      if (p.lift > 0.9) status = 'LIFT ZONE  ·  BOMBS AWAY';
+      else if (g.coreOpen && g.state === 'play') { status = 'CORE EXPOSED'; sc = '#f87171'; }
+      if (status && Math.floor(t * 3) % 2 === 0) {
+        c.textAlign = 'center';
+        c.font = '700 ' + Math.round(18 * u) + 'px Rajdhani, "Segoe UI", sans-serif';
+        c.fillStyle = sc;
+        c.fillText(status.split('').join(' '), w / 2, by + 36 * u);
       }
       c.restore();
     }
@@ -1043,17 +831,16 @@
       if (!m) return;
       const c = this.ctx, u = this.ui;
       const kin = clamp(m.t / 0.3, 0, 1), kout = m.dur > 100 ? 1 : clamp((m.dur - m.t) / 0.4, 0, 1);
-      const a = Math.min(kin, kout);
-      const sc = 0.85 + 0.15 * (1 - Math.pow(1 - kin, 3));
       c.save();
-      c.globalAlpha = a;
-      c.translate(this.w / 2, this.h * 0.42);
+      c.globalAlpha = Math.min(kin, kout);
+      c.translate(this.w / 2, this.h * 0.4);
+      const sc = 0.85 + 0.15 * (1 - Math.pow(1 - kin, 3));
       c.scale(sc, sc);
       c.textAlign = 'center';
       c.textBaseline = 'middle';
       const size = Math.round(Math.min(58 * u, this.w / (m.text.length * 0.9)));
       c.font = '800 ' + size + 'px Orbitron, "Segoe UI", sans-serif';
-      c.shadowColor = m.text.indexOf('OVERHEAT') === 0 || m.text === 'GAME OVER' ? 'rgba(239,68,68,0.9)' : 'rgba(45,212,191,0.9)';
+      c.shadowColor = m.text === 'GAME OVER' || m.text === 'TIME UP' ? 'rgba(239,68,68,0.9)' : 'rgba(45,212,191,0.9)';
       c.shadowBlur = 28 * u;
       c.fillStyle = '#f8fafc';
       c.fillText(m.text, 0, 0);
@@ -1070,53 +857,98 @@
     /* ---------------- frame ---------------- */
 
     render(g) {
+      this.ensureMap(g);
+      this.setupCamera(g);
       const c = this.ctx, w = this.w, h = this.h;
       c.setTransform(1, 0, 0, 1, 0, 0);
       c.globalAlpha = 1;
       c.globalCompositeOperation = 'source-over';
-      c.imageSmoothingEnabled = true;
       c.fillStyle = '#02060f';
       c.fillRect(0, 0, w, h);
 
       c.save();
       if (this.shake > 0) c.translate((Math.random() - 0.5) * this.shake * this.ui, (Math.random() - 0.5) * this.shake * this.ui);
+      this.drawSky();
+      this.drawGround();
 
-      if (this.backdrop) c.drawImage(this.backdrop, -this.backPad - clamp(this.camX * 2 * this.ui, -this.backPad, this.backPad), 0);
-      this.drawFloor(g);
-      this.drawFloorLights(g);
+      // Floor lighting and markers
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      for (const l of this.lights) this.floorLight(l.x, l.y, l.r, l.rgb, 0.5 * (l.life / l.max));
+      for (const s of g.shots) this.floorLight(s.x, s.y, 34, '253,224,71', 0.2);
+      for (const b of g.eshots) this.floorLight(b.x, b.y, 28, b.kind === 'plasma' ? '244,63,94' : '251,146,60', 0.22);
+      if (g.coreOpen) {
+        const core = g.enemies.find(e => e.type === 'core');
+        if (core) this.floorLight(core.x, core.y, 160, '249,115,22', 0.25 + 0.1 * Math.sin(this.t * 8));
+      }
+      for (const r of this.rings) {
+        const P = this.proj(r.x, r.y, 0);
+        if (P.z < 20) continue;
+        c.save();
+        c.translate(P.x, P.y);
+        c.scale(1, this.camH / P.z);
+        c.strokeStyle = 'rgba(' + r.rgb + ',' + (0.8 * r.life / r.maxLife).toFixed(3) + ')';
+        c.lineWidth = Math.max(1, 6 * P.s);
+        c.beginPath(); c.arc(0, 0, r.r * P.s, 0, TAU); c.stroke();
+        c.restore();
+      }
+      c.restore();
+      for (const gr of g.grenades) {
+        if (gr.owner !== 'enemy' || Math.floor(this.t * 10) % 2) continue;
+        c.lineWidth = Math.max(1.5, 2 * this.ui);
+        this.groundEllipse(gr.x1, gr.y1, gr.r, 'rgba(239,68,68,0.18)', 'rgba(248,113,113,0.95)');
+      }
+      this.drawGuide(g);
 
-      // Cast shadows
-      const m = g.mother;
-      this.shadow(m.x, m.y, 90, MOTHER_ALT);
-      for (const e of g.enemies) this.shadow(e.x, e.y, e.w * 0.7, enemyAlt(e));
-      if (g.player.alive) this.shadow(g.player.x, g.player.y, 26, 0);
+      // Shadows
+      const p = g.player;
+      for (const e of g.enemies) this.shadow(e.x + (e.flying ? 14 : 2), e.y + (e.flying ? 18 : 3), e.flying ? 16 : e.r * 1.2, e.flying ? 0.35 : 0.3);
+      if (p.alive) this.shadow(p.x + 3 + p.alt * 20, p.y + 4 + p.alt * 24, 20 + p.alt * 4, 0.4 - p.alt * 0.1);
+      for (const gr of g.grenades) this.shadow(gr.x, gr.y, 4, 0.35);
 
-      // Depth-sorted actors, far to near
+      // Depth-sorted scenery and actors
       const list = [];
-      list.push({ z: this.proj(m.x, m.y, MOTHER_ALT).z, fn: () => this.drawMother(g) });
-      for (const e of g.enemies) list.push({ z: this.proj(e.x, e.y, 0).z, fn: () => this.drawEnemy(e) });
-      if (g.player.alive) list.push({ z: this.proj(g.player.x, g.player.y, 0).z, fn: () => this.drawPlayer(g) });
-      for (const s of g.shots) list.push({ z: this.proj(s.x, s.y, 0).z - 1, fn: () => this.drawShot(s) });
-      for (const b of g.bullets) list.push({ z: this.proj(b.x, b.y, 0).z - 1, fn: () => this.drawBullet(b) });
+      this.collectTiles(list);
+      for (const e of g.enemies) {
+        const z = this.depth(e.x, e.y) - (e.type === 'fortgun' || e.type === 'core' ? 0.5 : 0) - (e.flying ? 60 : 0);
+        if (z > 20 && z < this.objZ) list.push({ z, fn: () => this.drawEnemy(g, e) });
+      }
+      if (p.alive) list.push({ z: this.depth(p.x, p.y) - (p.alt > 0 ? 80 : 0), fn: () => this.drawPlayer(g) });
+      for (const s of g.shots) list.push({ z: this.depth(s.x, s.y) - 2, fn: () => this.drawShot(s) });
+      for (const b of g.eshots) list.push({ z: this.depth(b.x, b.y) - (b.fromFort || b.flying ? 30 : 2), fn: () => this.drawEShot(b) });
+      for (const gr of g.grenades) list.push({ z: this.depth(gr.x, gr.y) - 40, fn: () => this.drawGrenade(gr) });
       list.sort((a, b) => b.z - a.z);
       for (const d of list) d.fn();
 
       this.drawParticles();
-      this.drawPopups();
+
+      // Score popups
+      c.save();
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      for (const pp of this.popups) {
+        const P = this.proj(pp.x, pp.y, pp.alt);
+        if (P.z < 20) continue;
+        c.globalAlpha = clamp(pp.life / pp.max * 2, 0, 1);
+        c.font = '700 ' + Math.round(16 * this.ui) + 'px Rajdhani, "Segoe UI", sans-serif';
+        c.fillStyle = pp.color || '#fde68a';
+        c.shadowColor = 'rgba(0,0,0,0.85)';
+        c.shadowBlur = 6 * this.ui;
+        c.fillText(pp.text, P.x, P.y);
+      }
+      c.restore();
       c.restore();
 
-      // Vignette
-      const vg = c.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+      const vg = c.createRadialGradient(w / 2, h * 0.6, Math.min(w, h) * 0.4, w / 2, h * 0.6, Math.max(w, h) * 0.8);
       vg.addColorStop(0, 'rgba(0,0,0,0)');
-      vg.addColorStop(1, 'rgba(0,0,0,0.5)');
+      vg.addColorStop(1, 'rgba(0,0,0,0.45)');
       c.fillStyle = vg;
       c.fillRect(0, 0, w, h);
 
       if (this.flash > 0) {
-        c.fillStyle = 'rgba(' + this.flashRgb + ',' + (this.flash * 0.45).toFixed(3) + ')';
+        c.fillStyle = 'rgba(' + this.flashRgb + ',' + (this.flash * 0.5).toFixed(3) + ')';
         c.fillRect(0, 0, w, h);
       }
-
       if (!this.hideHud) {
         this.drawHUD(g);
         this.drawMessage(g);
